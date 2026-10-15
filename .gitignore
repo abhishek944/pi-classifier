@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tgz
+.env
+.env.*
+!.env.example
+.npmrc
+.pi/
+var/
+.DS_Store
+npm-debug.log*

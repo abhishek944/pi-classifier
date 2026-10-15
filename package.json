@@ -1,0 +1,74 @@
+{
+  "name": "@abhishek944/pi-classifier",
+  "version": "0.1.0",
+  "description": "Config-driven typed classification for Pi via OpenAI Decisions, Perplexity, TypeSafe Jev and Cloudflare Clef.",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "classifier",
+    "decisions",
+    "jev",
+    "clef"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abhishek944/pi-classifier.git"
+  },
+  "homepage": "https://github.com/abhishek944/pi-classifier#readme",
+  "bugs": {
+    "url": "https://github.com/abhishek944/pi-classifier/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./extension": {
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/extension.ts"
+    ]
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "check": "npm run typecheck && npm run build && npm pack --dry-run"
+  },
+  "dependencies": {
+    "@amaster.ai/pi-shared": "^0.1.10",
+    "sharp": "^0.35.5"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=1.2.0",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.2.0",
+    "typebox": "*",
+    "typescript": "^5.9.3",
+    "@types/node": "^22.0.0"
+  }
+}
