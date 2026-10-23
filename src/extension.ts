@@ -5,8 +5,13 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { classify } from "./classify.js";
-import { listModels, loadClassifierSettings, resolveModel } from "./config.js";
+import { classify, compareClassifiers } from "./classify.js";
+import {
+  configuredRoutes,
+  listModels,
+  loadClassifierSettings,
+  resolveModel,
+} from "./config.js";
 import { updateProjectClassifierSettings } from "./settings-write.js";
 import { ClassifierError, userError } from "./types.js";
 
@@ -134,6 +139,31 @@ export const classifyOutput = Type.Object({
     }),
   ),
   requestId: Type.Optional(Type.String()),
+  attemptedRoutes: Type.Optional(
+    Type.Array(Type.Object({ provider: Type.String(), model: Type.String() })),
+  ),
+});
+
+export const classifyCompareOutput = Type.Object({
+  cancelled: Type.Boolean(),
+  results: Type.Array(
+    Type.Union([
+      Type.Object({
+        provider: Type.String(),
+        model: Type.String(),
+        durationMs: Type.Number(),
+        status: Type.Literal("success"),
+        result: classifyOutput,
+      }),
+      Type.Object({
+        provider: Type.String(),
+        model: Type.String(),
+        durationMs: Type.Number(),
+        status: Type.Literal("error"),
+        error: Type.Object({ code: Type.String(), message: Type.String() }),
+      }),
+    ]),
+  ),
 });
 
 export default function piClassifier(pi: ExtensionAPI): void {
@@ -142,7 +172,7 @@ export default function piClassifier(pi: ExtensionAPI): void {
       name: "classify",
       label: "Classify",
       description:
-        "Ask a decision model typed questions about text, JSON and supported local images. Returns bool probabilities, choices with probabilities, or scores. Experimental box answers require explicit Jev configuration. Provider/model are fixed by pi-classifier.defaultProvider/defaultModel; this tool cannot override them. API-key authentication is independent of Codex chat login. Exactly one provider request: no retries or fallbacks. Use /classifier list or status to inspect configuration.",
+        "Ask a decision model typed questions about text, JSON and supported local images. Returns bool probabilities, choices with probabilities, or scores. Experimental box answers require explicit Jev configuration. Provider/model are fixed by pi-classifier.default (or legacy defaultProvider/defaultModel); this tool cannot override them. API-key authentication is independent of Codex chat login. Only explicitly configured fallback routes may be used after a missing key or HTTP 401/404/429; never after uncertainty, refusals, timeouts or network failures. Use /classifier list or status to inspect configuration.",
       promptSnippet:
         "Classify text, JSON or supported images into typed probabilistic decisions.",
       promptGuidelines: [
@@ -181,16 +211,78 @@ export default function piClassifier(pi: ExtensionAPI): void {
     }),
   );
 
+  pi.registerTool(
+    defineTool({
+      name: "classify_compare",
+      label: "Compare classifiers",
+      description:
+        "Explicitly compare the same typed questions and state using exactly pi-classifier.compare provider/model pairs. Each entry is a separate potentially billable request. No fallback, default substitution, provider/model overrides, or default changes. Returns labeled results, duration, usage and safe per-entry failures; cancellation retains completed results and prevents later requests.",
+      promptSnippet:
+        "Compare configured decision models only when the user explicitly requests a model comparison.",
+      promptGuidelines: [
+        "Use only when the user explicitly asks to compare classifier models; never use automatically for low confidence or refusals.",
+        "Each configured comparison route receives the submitted data and may incur a charge.",
+      ],
+      parameters: classifyParameters,
+      outputSchema: classifyCompareOutput,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+      async execute(_id, params, signal, _onUpdate, ctx) {
+        try {
+          const result = await compareClassifiers(params, {
+            settings: loadClassifierSettings(ctx.cwd, isProjectTrusted(ctx)),
+            cwd: ctx.cwd,
+            ...(signal ? { signal } : {}),
+          });
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+            details: result,
+            structuredContent: { ...result },
+          };
+        } catch (error) {
+          throw new Error(userError(error));
+        }
+      },
+    }),
+  );
+
   pi.registerCommand("classifier", {
     description:
-      "Classifier configuration: status, list, reload, use <route> <model> (writes trusted project settings).",
+      "Classifier: status, list, reload, use <route> <model>, compare <JSON params>. Use writes trusted project defaults; compare makes potentially billable calls.",
     handler: async (args, ctx) => {
       try {
         const parts = args.trim().split(/\s+/).filter(Boolean);
         const command = parts[0] ?? "status";
         const settings = loadClassifierSettings(ctx.cwd, isProjectTrusted(ctx));
-        if (command === "list" && parts.length === 1) {
-          reply(pi, ctx, listModels(settings));
+        if (command === "compare") {
+          let params: unknown;
+          try {
+            params = JSON.parse(args.trim().slice("compare".length).trim());
+          } catch {
+            throw new ClassifierError(
+              "input",
+              "Usage: /classifier compare <JSON with state, questions and optional images>.",
+            );
+          }
+          const result = await compareClassifiers(params, {
+            settings,
+            cwd: ctx.cwd,
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
+          });
+          reply(pi, ctx, JSON.stringify(result, null, 2));
+        } else if (command === "list" && parts.length === 1) {
+          reply(
+            pi,
+            ctx,
+            listModels(settings) +
+              "\n\nFallback: " +
+              JSON.stringify(configuredRoutes(settings, "fallback")) +
+              "\nCompare: " +
+              JSON.stringify(configuredRoutes(settings, "compare")),
+          );
         } else if (
           (command === "status" || command === "reload") &&
           parts.length <= 1
@@ -207,7 +299,8 @@ export default function piClassifier(pi: ExtensionAPI): void {
                 box: route.box,
                 requestTimeoutMs: route.requestTimeoutMs,
                 authentication: "API key only; independent of chat login",
-                fallback: false,
+                fallback: configuredRoutes(settings, "fallback"),
+                compare: configuredRoutes(settings, "compare"),
               },
               null,
               2,
@@ -216,14 +309,13 @@ export default function piClassifier(pi: ExtensionAPI): void {
         } else if (command === "use" && parts.length === 3) {
           const selected = {
             ...settings,
-            defaultProvider: parts[1]!,
-            defaultModel: parts[2]!,
+            default: { provider: parts[1]!, model: parts[2]! },
           };
           const route = resolveModel(selected);
           await updateProjectClassifierSettings(
             ctx.cwd,
             isProjectTrusted(ctx),
-            { defaultProvider: route.route, defaultModel: route.model },
+            { default: { provider: route.route, model: route.model } },
           );
           reply(
             pi,
@@ -238,7 +330,7 @@ export default function piClassifier(pi: ExtensionAPI): void {
           reply(
             pi,
             ctx,
-            "Usage: /classifier status | list | reload | use <route> <model>",
+            "Usage: /classifier status | list | reload | use <route> <model> | compare <JSON params>",
           );
         }
       } catch (error) {

@@ -13,8 +13,8 @@ import {
 
 /**
  * Provider protocol adapters. Every request goes through the shared `postJson` boundary, which
- * owns timeouts, cancellation, bounded reads and safe errors. There is no retry or fallback: one
- * call classifies once. Answers are rebuilt field by field from validated values, so raw provider
+ * owns timeouts, cancellation, bounded reads and safe errors. Each adapter call classifies once;
+ * route orchestration belongs to classify.ts. Answers are rebuilt field by field from validated values, so raw provider
  * bodies and provider error text never reach callers.
  */
 
@@ -38,6 +38,8 @@ export async function classifyWithProvider(
       return classifyPerplexity(route, input, apiKey, signal);
     case "system-one":
       return classifySystemOne(route, input, apiKey, signal);
+    case "microsoft-system-one":
+      return classifyMicrosoft(route, input, apiKey, signal);
     case "cloudflare-system-one":
       return classifyCloudflare(route, input, apiKey, signal);
     default:
@@ -688,6 +690,67 @@ async function classifyPerplexity(
   return finish(
     route,
     parseTypedAnswers(PERPLEXITY_LABEL, body.answers, input.questions),
+    normalizedUsage(body.usage),
+    requestId,
+  );
+}
+
+/* Microsoft Foundry Decision-1 (text/JSON, API-key authentication) -------- */
+
+async function classifyMicrosoft(
+  route: ResolvedModel,
+  input: PreparedInput,
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<ClassifierResult> {
+  const label = "Microsoft Decision-1";
+  const { body, requestId } = await postJson(
+    route,
+    "providers/microsoft/v1/systemone",
+    {
+      model: route.model, // Foundry deployment name, not necessarily the catalog model ID.
+      state: input.state,
+      questions: systemOneQuestions(input.questions, false),
+    },
+    apiKey,
+    signal,
+  );
+  if (!isRecord(body) || !isRecord(body.answers))
+    fail(label + " returned an unexpected response.");
+  // Some System One endpoints omit confidence; derive it only from validated probabilities.
+  const answers = Object.create(null) as Record<string, unknown>;
+  for (const [id, question] of Object.entries(input.questions)) {
+    const answer = Object.hasOwn(body.answers, id) ? body.answers[id] : undefined;
+    if (
+      isRecord(answer) &&
+      answer.confidence === undefined &&
+      answer.type !== "refusal"
+    ) {
+      if (question.type === "choice" && typeof answer.choice === "string") {
+        const probabilities = labelProbabilities(
+          label,
+          id,
+          answer.probabilities,
+          Object.keys(question.criteria),
+        );
+        answers[id] = { ...answer, confidence: probabilities[answer.choice] };
+      } else if (question.type === "score") {
+        const probabilities = levelProbabilities(
+          label,
+          id,
+          answer.probabilities,
+          question.criteria.length,
+        );
+        answers[id] = {
+          ...answer,
+          confidence: Math.max(...Object.values(probabilities)),
+        };
+      } else answers[id] = answer;
+    } else answers[id] = answer;
+  }
+  return finish(
+    route,
+    parseTypedAnswers(label, answers, input.questions),
     normalizedUsage(body.usage),
     requestId,
   );

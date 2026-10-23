@@ -17,7 +17,7 @@ export class SettingsWriteError extends Error {}
 export function updateProjectClassifierSettings(
   cwd: string,
   projectTrusted: boolean,
-  update: Pick<ClassifierSettings, "defaultProvider" | "defaultModel">,
+  update: Pick<ClassifierSettings, "default">,
 ): Promise<void> {
   const settingsPath = resolve(cwd, ".pi", "settings.json");
   return withFileMutationQueue(settingsPath, () =>
@@ -28,7 +28,7 @@ export function updateProjectClassifierSettings(
 async function updateProjectClassifierSettingsNow(
   cwd: string,
   projectTrusted: boolean,
-  update: Pick<ClassifierSettings, "defaultProvider" | "defaultModel">,
+  update: Pick<ClassifierSettings, "default">,
 ): Promise<void> {
   if (!projectTrusted) {
     throw new SettingsWriteError(
@@ -80,7 +80,13 @@ async function updateProjectClassifierSettingsNow(
       "pi-classifier settings must contain a JSON object.",
     );
   }
-  root[SETTINGS_KEY] = { ...(current ?? {}), ...withoutUndefined(update) };
+  const next: Record<string, unknown> = {
+    ...(current ?? {}),
+    ...withoutUndefined(update),
+  };
+  delete next.defaultProvider;
+  delete next.defaultModel;
+  root[SETTINGS_KEY] = next;
 
   const tempPath = join(
     settingsDir,

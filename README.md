@@ -1,15 +1,15 @@
 # pi-classifier
 
-A Pi extension for typed, probabilistic decisions across OpenAI Decisions, Perplexity Decisions, TypeSafe Jev, Cloudflare Clef/Clef Flash and SystemOne-compatible gateways.
+A Pi extension for typed, probabilistic decisions across Microsoft Decision-1, OpenAI Decisions, Perplexity Decisions, TypeSafe Jev, Cloudflare Clef/Clef Flash and SystemOne-compatible gateways.
 
-One configured model, one provider request. No fallback routes, automatic retries, model switching or permission auto-approval.
+One configured default, optional selective fallback, and explicit model comparisons. No automatic retries or permission auto-approval.
 
 ## Install
 
-Requires Node.js 22.19+ and Pi 1.2+. Install the public baseline from GitHub:
+Requires Node.js 22.19+ and Pi 1.2+. Install the tagged release from GitHub:
 
 ```sh
-pi install git:github.com/abhishek944/pi-classifier@v0.1.0
+pi install git:github.com/abhishek944/pi-classifier@v0.2.0
 ```
 
 The Pi package entrypoint is TypeScript source, so Git installs do not depend on committed build artifacts or a TypeScript compiler. Runtime dependencies are installed by Pi. The compiled `dist` exports remain available for library consumers after a build.
@@ -30,17 +30,21 @@ To install persistently after trying it:
 pi install /absolute/path/to/pi-classifier
 ```
 
-The baseline package version and Git tag are `0.1.0` / `v0.1.0`. Installation is explicit; this release is available from GitHub, not published to npm.
+The package version and Git tag are `0.2.0` / `v0.2.0`. Installation is explicit. This release is prepared for GitHub; npm publication is a separate manual step.
 
 ## Configuration: same shape as pi-image-gen
 
-Use the `pi-classifier` namespace in Pi settings. Like `pi-image-gen`, route selection uses `defaultProvider` and `defaultModel`; credentials/endpoints are nested under `providers.<provider-id>`. The two extensions have independent settings and do not change one another.
+Use the `pi-classifier` namespace in Pi settings. Like `pi-image-gen`, route selection uses `default: { provider, model }`, optional ordered `fallback` pairs, and explicit `compare` pairs. Legacy `defaultProvider` and `defaultModel` remain supported when `default` is absent; a present but malformed `default` fails closed. No settings are automatically migrated; credentials/endpoints are nested under `providers.<provider-id>`. Default selection happens after settings layers are merged: if a user/agent layer has a nested `default`, a project's legacy default keys do not override it. Use a nested `default` in the project too; mixed-format per-layer normalization is not implemented. The two extensions have independent settings and do not change one another.
 
 ```json
 {
   "pi-classifier": {
-    "defaultProvider": "openai-api",
-    "defaultModel": "gpt-6-luna",
+    "default": { "provider": "openai-api", "model": "gpt-6-luna" },
+    "fallback": [{ "provider": "typesafe-api", "model": "jev-latest" }],
+    "compare": [
+      { "provider": "openai-api", "model": "gpt-6-luna" },
+      { "provider": "typesafe-api", "model": "jev-latest" }
+    ],
     "requestTimeoutMs": 30000,
     "providers": {
       "openai": { "apiKey": "${OPENAI_API_KEY}" },
@@ -78,6 +82,7 @@ Stored API-key values support literal strings and `$NAME`/`${NAME}` references, 
 
 | Route            | Provider settings key | Models                                                             | Environment key      |
 | ---------------- | --------------------- | ------------------------------------------------------------------ | -------------------- |
+| `microsoft-api` | `microsoft` | `Microsoft-Decision-1` (select your actual deployment name) | `AZURE_API_KEY` |
 | `openai-api`     | `openai`              | `gpt-6-luna`                                                       | `OPENAI_API_KEY`     |
 | `perplexity-api` | `perplexity`          | `pplx-decider-v1.1-27b`, `pplx-decider-v1-27b`                     | `PERPLEXITY_API_KEY` |
 | `typesafe-api`   | `typesafe`            | `jev-latest`, `jev-1.13.0`, `jev-preview`, `jev-1.14.0`            | `TYPESAFE_API_KEY`   |
@@ -86,7 +91,7 @@ Stored API-key values support literal strings and `$NAME`/`${NAME}` references, 
 
 Cloudflare also needs `providers.cloudflare.accountId`, the stored `cloudflare-workers-ai` API-key credential's `env.CLOUDFLARE_ACCOUNT_ID`, or `CLOUDFLARE_ACCOUNT_ID`, in that order. Its stored API token lives under `cloudflare-workers-ai`, not `cloudflare`.
 
-A provider's `baseUrl` replaces the API root (before `decisions`, `systemone`, or Cloudflare's run path). Authentication/transport headers cannot be overridden. Custom headers are supported. HTTPS is required except for loopback HTTP.
+A provider's `baseUrl` replaces the API root (before `decisions`, `systemone`, Microsoft's `providers/microsoft/v1/systemone`, or Cloudflare's run path). Authentication/transport headers cannot be overridden. Custom headers are supported. HTTPS is required except for loopback HTTP.
 
 New text model IDs on built-in routes can be selected without a package release. They must actually implement that route's API; a normal chat model is not a decision model. New image capabilities require a known model or explicit custom model declaration.
 
@@ -99,7 +104,7 @@ New text model IDs on built-in routes can be selected without a package release.
 /classifier reload
 ```
 
-`use` writes only `defaultProvider`/`defaultModel` into trusted project `.pi/settings.json`, preserving unrelated settings. The project must be trusted. All calls load current settings, so `reload` validates and displays the current route rather than maintaining a separate configuration cache. To change global defaults, edit the global `pi-classifier` settings.
+`use` writes only the nested `default` into trusted project `.pi/settings.json`, removing local legacy default keys and preserving unrelated settings, `fallback`, and `compare`. The project must be trusted. All calls load current settings, so `reload` validates and displays the current route rather than maintaining a separate configuration cache. To change global defaults, edit the global `pi-classifier` settings.
 
 The model calls:
 
@@ -129,6 +134,42 @@ The tool takes no provider/model parameter. Its structured result identifies the
 
 Provider results are checked for probability ranges/distribution sums and decision consistency (selected choices must be most likely; supplied score distributions must match the expected score within rounding tolerance). Low confidence is a valid answer, not an error. Calibrate thresholds on your own data; scores from different providers are not interchangeable.
 
+## Microsoft Decision-1 on Foundry
+
+Deploy `Microsoft-Decision-1` in Microsoft Foundry, then configure the **resource endpoint**, API key, and actual **deployment name**:
+
+```json
+{
+  "pi-classifier": {
+    "default": { "provider": "microsoft-api", "model": "my-decision-deployment" },
+    "providers": {
+      "microsoft": {
+        "baseUrl": "https://YOUR-RESOURCE.services.ai.azure.com",
+        "apiKey": "${AZURE_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+The extension appends `/providers/microsoft/v1/systemone` and uses the `api-key` header, not bearer API-key authentication. The catalog name is only a discovery entry: `model` must match your deployment, which may have another name. Microsoft currently supports text/JSON bool (wire type `noul`), choice, and score; images and box are rejected locally. Entra token authentication is not implemented. The selected deployment is reported in results even if Foundry returns a different underlying model name. If Microsoft omits confidence, choice confidence is derived from the selected probability and score confidence from the largest level probability. The official guide does not include a complete response JSON example; verify actual bool/choice/score responses on your deployment before relying on this integration.
+
+## Fallback and explicit comparison
+
+`classify` uses the default first. It tries configured `fallback` entries in order **only** after a missing API key or an explicit HTTP **401, 404, or 429**. Each resolved endpoint/model is attempted at most once. When fallback is exercised, `attemptedRoutes` identifies the routes considered, including missing-key failures.
+
+No automatic fallback occurs after 403/policy refusal, 400/422, 5xx, timeout, network failure, cancellation, malformed answers, input/capability/configuration errors, low confidence, or typed refusals. Each candidate validates the original input against its own capabilities; incompatible images or box questions stop the chain, never silently drop input. Every attempted request has its own timeout. Crossing billing providers and sharing state with them happens only through explicitly configured route pairs. Omit `fallback` or use `[]` to disable it.
+
+Use **`classify_compare`** only when you explicitly want a model comparison. It accepts the same `{ state, questions, images? }` as `classify`, runs exactly the entries in `compare` sequentially, and never substitutes the default, uses fallback, or changes settings. Every entry is a separate potentially billable call. Responses contain labeled `results` with status, duration in milliseconds, typed answers/token usage on success, or safe errors. A failed entry does not discard successes. Duplicate endpoint/model entries report an error without another call. Cancellation retains completed results, records an in-flight cancellation when present, sets `cancelled`, and prevents later requests. Scores from different models are not assumed to be calibrated equally.
+
+You can also run `/classifier compare <JSON params>`, for example:
+
+```text
+/classifier compare {"state":"Checkout is down.","questions":{"urgent":{"type":"bool","instructions":"Is this urgent?"}}}
+```
+
+The library exports `compareClassifiers(params, { settings, cwd, signal? })`. Neither tool accepts provider/model overrides. A missing or empty `compare` list is a configuration error and makes no calls. Comparison output can be larger than a single result; use the tool rather than the command for full structured results (command messages are truncated to 16,000 characters).
+
 ### Images and experimental Jev box answers
 
 Pass `images: ["photo.png"]`. Images are attached in order alongside state. OpenAI, Perplexity and Clef/Clef Flash support images. Cloudflare-hosted Jev and the built-in OpenRouter route are text-only in this package.
@@ -156,7 +197,7 @@ With an image, a question such as `{ "type": "box", "instructions": "Find the mu
 
 ## Custom providers
 
-Like image-gen, `customProviders` adds a named endpoint and explicit model list. Supported protocols are `openai-decisions`, `perplexity-decisions`, `system-one`, and `cloudflare-system-one`. A custom URL cannot make an arbitrary API compatible. Custom IDs must not shadow built-in provider/route IDs.
+Like image-gen, `customProviders` adds a named endpoint and explicit model list. Supported protocols are `openai-decisions`, `perplexity-decisions`, `system-one`, `cloudflare-system-one`, and `microsoft-system-one` (Foundry resource root and API-key authentication). A custom URL cannot make an arbitrary API compatible. Custom IDs must not shadow built-in provider/route IDs.
 
 ```json
 {
@@ -190,9 +231,12 @@ No provider calls are made by these commands. Live tests belong to the user:
 1. Keep Codex logged in and configure an OpenAI API key. Select `openai-api/gpt-6-luna`, classify one bool, and verify chat login did not change.
 2. Select each provider and ask bool/choice/score questions; check probabilities, selected model and usage.
 3. Try a small PNG on OpenAI, Perplexity and Clef. Enable Jev images explicitly before trying its preview; verify box coordinates separately.
-4. Cancel an in-flight call and check a deliberately invalid model/key. Errors must be safe and must not trigger another route.
-5. Use `/classifier use` in a trusted project and confirm unrelated settings remain intact.
+4. Cancel an in-flight call and check a deliberately invalid model/key. Errors must be safe; only missing keys and HTTP 401/404/429 may select an explicitly configured fallback. Timeout/network/403/5xx/malformed results must not trigger another route.
+5. Use `/classifier use` in a trusted project and confirm unrelated settings and both route lists remain intact. Check legacy-only defaults as well as nested defaults.
+6. Configure your Foundry endpoint and deployment name, select `microsoft-api`, and verify bool/choice/score responses and token usage. Verify an image is rejected locally.
+7. Configure two `compare` pairs and explicitly invoke `classify_compare`; confirm labeled successes/errors, duration, unchanged defaults, and that cancellation prevents subsequent calls. Each valid entry may be billed.
+8. In your own controlled deployment, verify missing keys and HTTP 401/404/429 allow only configured fallbacks; duplicate routes are never called twice. Verify low confidence and refusals return normally without switching models.
 
 Provider schemas and previews can change; no live entitlement or model-accuracy claim is made by a local build.
 
-Sources: [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions), [Perplexity Decisions](https://docs.perplexity.ai/docs/decisions/quickstart), [TypeSafe images](https://docs.typesafe.ai/images), [TypeSafe box](https://docs.typesafe.ai/primitives/box), [Cloudflare Clef](https://developers.cloudflare.com/workers-ai/models/clef/).
+Sources: [Microsoft Decision-1](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision), [OpenAI Decisions](https://developers.openai.com/api/docs/guides/decisions), [Perplexity Decisions](https://docs.perplexity.ai/docs/decisions/quickstart), [TypeSafe images](https://docs.typesafe.ai/images), [TypeSafe box](https://docs.typesafe.ai/primitives/box), [Cloudflare Clef](https://developers.cloudflare.com/workers-ai/models/clef/).

@@ -2,7 +2,8 @@ export type ApiStyle =
   | "openai-decisions"
   | "perplexity-decisions"
   | "system-one"
-  | "cloudflare-system-one";
+  | "cloudflare-system-one"
+  | "microsoft-system-one";
 
 export type Question =
   | {
@@ -63,7 +64,15 @@ export interface CustomProviderSettings extends ProviderSettings {
   models: ModelDefinition[];
 }
 
+export type ClassifierRoute = {
+  provider: string;
+  model: string;
+};
+
 export interface ClassifierSettings {
+  default?: ClassifierRoute;
+  fallback?: ClassifierRoute[];
+  compare?: ClassifierRoute[];
   defaultProvider?: string;
   defaultModel?: string;
   requestTimeoutMs?: number;
@@ -100,18 +109,32 @@ export interface PreparedInput {
   images: PreparedImage[];
 }
 
-export interface ClassifierResult {
+export type ClassifierResult = {
   provider: string;
   model: string;
   answers: Record<string, Answer>;
   usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
   requestId?: string;
-}
+  attemptedRoutes?: ClassifierRoute[];
+};
+
+export type ClassifierComparisonEntry = ClassifierRoute & {
+  durationMs: number;
+} & (
+  | { status: "success"; result: ClassifierResult }
+  | { status: "error"; error: { code: string; message: string } }
+);
+
+export type ClassifierComparisonResult = {
+  results: ClassifierComparisonEntry[];
+  cancelled: boolean;
+};
 
 export class ClassifierError extends Error {
   constructor(
     public readonly code: string,
     message: string,
+    public readonly httpStatus?: number,
   ) {
     super(message);
     this.name = "ClassifierError";

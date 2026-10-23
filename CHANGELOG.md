@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- Microsoft Decision-1 via Foundry resource endpoints and deployment names, API-key authentication, and text/JSON bool/choice/score questions.
+- Nested `default` provider/model pairs with legacy default-key compatibility, ordered selective `fallback`, and explicit `compare` routes.
+- `classify_compare`, `/classifier compare <JSON params>`, and the `compareClassifiers` library export, with labeled successes/errors, per-entry duration, and cancellation preserving completed results.
+- Automatic alternatives only for missing API keys or HTTP 401/404/429; no route retries, fallback after uncertain outcomes, or automatic model comparisons.
+- `/classifier use` writes the nested default while preserving fallback/comparison lists and unrelated settings.
+
+Verification: typecheck, build, package dry run, whitespace checks, and independent source review passed. No unit tests or live provider calls were run for this release. Microsoft response shapes remain unverified against a live Foundry deployment. Nested defaults take precedence over legacy keys in merged classifier settings; mixed-format global/project overrides are not yet normalized per layer like image-gen.
+
 ## 0.1.0
 
 Initial public baseline.

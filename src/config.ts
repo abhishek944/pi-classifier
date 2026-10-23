@@ -11,6 +11,7 @@ import {
   isRecord,
   type ApiStyle,
   type ClassifierSettings,
+  type ClassifierRoute,
   type ModelDefinition,
   type ProviderSettings,
   type ResolvedModel,
@@ -18,6 +19,15 @@ import {
 
 export const SETTINGS_KEY = "pi-classifier";
 export const BUILT_INS = [
+  {
+    id: "microsoft",
+    route: "microsoft-api",
+    api: "microsoft-system-one",
+    baseUrl: "",
+    credentialProvider: "microsoft",
+    envVar: "AZURE_API_KEY",
+    models: [{ id: "Microsoft-Decision-1", input: ["text"] }],
+  },
   {
     id: "openai",
     route: "openai-api",
@@ -183,6 +193,7 @@ function headers(value: unknown): Record<string, string> {
   }
   const protectedNames = [
     "authorization",
+    "api-key",
     "content-type",
     "content-length",
     "host",
@@ -208,13 +219,41 @@ function headers(value: unknown): Record<string, string> {
   return value as Record<string, string>;
 }
 
-export function resolveModel(settings: ClassifierSettings): ResolvedModel {
-  const routeId = optionalString(settings.defaultProvider, "defaultProvider");
-  const modelId = optionalString(settings.defaultModel, "defaultModel");
-  if (!routeId || !modelId)
-    return configuration(
-      "Set pi-classifier.defaultProvider and defaultModel, or run /classifier use <route> <model>.",
-    );
+export function configuredDefault(settings: ClassifierSettings): ClassifierRoute {
+  if (settings.default !== undefined)
+    return routePair(settings.default, "default");
+  return routePair(
+    { provider: settings.defaultProvider, model: settings.defaultModel },
+    "defaultProvider/defaultModel",
+  );
+}
+
+function routePair(value: unknown, field: string): ClassifierRoute {
+  if (!isRecord(value))
+    return configuration(field + " must be a provider/model pair.");
+  const provider = optionalString(value.provider, field + ".provider");
+  const model = optionalString(value.model, field + ".model");
+  if (!provider || !model)
+    return configuration(field + " requires provider and model.");
+  return { provider, model };
+}
+
+export function configuredRoutes(
+  settings: ClassifierSettings,
+  field: "fallback" | "compare",
+): ClassifierRoute[] {
+  const value = settings[field];
+  if (value === undefined) return [];
+  if (!Array.isArray(value))
+    return configuration(field + " must be an array of provider/model pairs.");
+  return value.map((entry, index) => routePair(entry, field + "[" + index + "]"));
+}
+
+export function resolveModel(
+  settings: ClassifierSettings,
+  selected: ClassifierRoute = configuredDefault(settings),
+): ResolvedModel {
+  const { provider: routeId, model: modelId } = routePair(selected, "route");
   if (
     !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(routeId) ||
     modelId.length > 256 ||
@@ -252,6 +291,7 @@ export function resolveModel(settings: ClassifierSettings): ResolvedModel {
       "perplexity-decisions",
       "system-one",
       "cloudflare-system-one",
+      "microsoft-system-one",
     ].includes(api)
   )
     return configuration("Unsupported classifier API protocol.");
@@ -290,7 +330,10 @@ export function resolveModel(settings: ClassifierSettings): ResolvedModel {
       "https://api.cloudflare.com/client/v4/accounts/" +
       cloudflareAccountId(optionalString(raw.accountId, "accountId")) +
       "/ai";
-  if (!baseUrl) return configuration("Custom providers require a baseUrl.");
+  if (!baseUrl)
+    return configuration(
+      "The selected provider requires a baseUrl. Microsoft uses your Foundry resource endpoint.",
+    );
   const timeout = settings.requestTimeoutMs ?? 30_000;
   if (!Number.isInteger(timeout) || timeout < 100 || timeout > 300_000)
     return configuration("requestTimeoutMs must be between 100 and 300000.");
@@ -312,11 +355,13 @@ export function resolveModel(settings: ClassifierSettings): ResolvedModel {
     headers: headers(raw.headers),
     credentialProvider: builtIn?.credentialProvider ?? routeId,
     images:
-      api === "system-one"
-        ? Boolean(
-            raw.experimentalImages && definition?.input?.includes("image"),
-          )
-        : Boolean(definition?.input?.includes("image")),
+      api === "microsoft-system-one"
+        ? false
+        : api === "system-one"
+          ? Boolean(
+              raw.experimentalImages && definition?.input?.includes("image"),
+            )
+          : Boolean(definition?.input?.includes("image")),
     box: Boolean(
       (isJevDirect || custom?.api === "system-one") &&
         definition?.box &&

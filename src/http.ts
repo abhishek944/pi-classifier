@@ -24,7 +24,11 @@ export async function postJson(
     const headers = new Headers(route.headers);
     for (const [key, value] of Object.entries(extraHeaders ?? {}))
       headers.set(key, value);
-    headers.set("authorization", "Bearer " + apiKey);
+    if (route.api === "microsoft-system-one") {
+      headers.set("api-key", apiKey);
+    } else {
+      headers.set("authorization", "Bearer " + apiKey);
+    }
     headers.set("content-type", "application/json");
     headers.set("accept", "application/json");
     const response = await fetch(route.baseUrl + "/" + path, {
@@ -40,7 +44,8 @@ export async function postJson(
         "http",
         "Classifier request failed (HTTP " +
           response.status +
-          "). Check credentials, model, limits and provider availability. No retry or fallback was attempted.",
+          "). Check credentials, model, limits and provider availability.",
+        response.status,
       );
     }
     const reader = response.body?.getReader();
@@ -89,12 +94,12 @@ export async function postJson(
         signal?.aborted ? "aborted" : "timeout",
         signal?.aborted
           ? "Classification was cancelled."
-          : "Classifier request timed out. No retry or fallback was attempted.",
+          : "Classifier request timed out. This request was not retried.",
       );
     if (error instanceof ClassifierError) throw error;
     throw new ClassifierError(
       "network",
-      "Classifier service could not be reached. No retry or fallback was attempted.",
+      "Classifier service could not be reached. This request was not retried.",
     );
   } finally {
     clearTimeout(timer);

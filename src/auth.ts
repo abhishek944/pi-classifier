@@ -49,7 +49,7 @@ export function resolveApiKey(route: ResolvedModel): string {
     (route.envVar ? process.env[route.envVar]?.trim() : undefined);
   if (!key) {
     throw new ClassifierError(
-      "credentials",
+      "missing_credentials",
       "No API key is configured for the selected classifier. Set providers.<id>.apiKey, save an API-key credential in Pi, or set the provider environment variable. Codex/OAuth tokens are not used.",
     );
   }
