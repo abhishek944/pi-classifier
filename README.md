@@ -84,7 +84,7 @@ Stored API-key values support literal strings and `$NAME`/`${NAME}` references, 
 | ---------------- | --------------------- | ------------------------------------------------------------------ | -------------------- |
 | `microsoft-api` | `microsoft` | `Microsoft-Decision-1` (select your actual deployment name) | `AZURE_API_KEY` |
 | `openai-api`     | `openai`              | `gpt-6-luna`                                                       | `OPENAI_API_KEY`     |
-| `perplexity-api` | `perplexity`          | `pplx-decider-v1.1-27b`, `pplx-decider-v1-27b`                     | `PERPLEXITY_API_KEY` |
+| `perplexity-api` | `perplexity`          | `pplx-decider-v1.2`, `pplx-decider-flash-v1.2`, latest aliases, legacy v1/v1.1 IDs                     | `PERPLEXITY_API_KEY` |
 | `typesafe-api`   | `typesafe`            | `jev-latest`, `jev-1.13.0`, `jev-preview`, `jev-1.14.0`            | `TYPESAFE_API_KEY`   |
 | `cloudflare-api` | `cloudflare`          | `@cf/cloudflare/clef`, `@cf/cloudflare/clef-flash`, `typesafe/jev` | `CLOUDFLARE_API_KEY` |
 | `openrouter-api` | `openrouter`          | `typesafe/jev-1.13`, `~typesafe/jev-latest`                        | `OPENROUTER_API_KEY` |
@@ -179,7 +179,7 @@ classify_tree({
 });
 ```
 
-`instructions` is optional and at most 8192 characters. Text/JSON `state` and optional local `images` use the existing classifier input rules. No provider/model override is accepted. The library exports `classifyTree(params, { settings, cwd, signal? })` and the `ClassificationTree`, `ClassificationTreeNode`, `ClassifyTreeParams`, `TreeStep` and `ClassifierTreeResult` types.
+`instructions` is optional and at most 8192 characters. Text/JSON `state` and optional `images` use the existing classifier input rules, including named images referenced in state. Tree definitions and tree instructions remain text-only. No provider/model override is accepted. The library exports `classifyTree(params, { settings, cwd, signal? })` and the `ClassificationTree`, `ClassificationTreeNode`, `ClassifyTreeParams`, `TreeStep` and `ClassifierTreeResult` types.
 
 ### Traversal and results
 
@@ -358,9 +358,11 @@ The library exports `compareClassifiers(params, { settings, cwd, signal? })`. Ne
 
 Pass `images: ["photo.png"]`. Images are attached in order alongside state. OpenAI, Perplexity and Clef/Clef Flash support images. Cloudflare-hosted Jev and the built-in OpenRouter route are text-only in this package.
 
-Image inputs are local non-animated PNG/JPEG/WebP regular files inside the session cwd, with no symlink components, URLs or inline base64. Safe descriptor-based loading currently supports macOS (requires the OS `/usr/sbin/lsof`) and Linux (`/proc`); other platforms support text classification only. Images are fully decoded locally before upload. Limits: five images; 5 MiB each, 10 MiB total and 16 megapixels each. Clef has stricter limits: four images, 4 MiB each and 8 MiB total. Perplexity requires at most 2048 tiles of 32×32 pixels per image; resize before sending. Images are not silently resized. Text/JSON plus questions are limited to 2 MiB, with at most 32 questions per call.
+Local image inputs are non-animated PNG/JPEG/WebP regular files inside the session cwd, with no symlink components or inline base64. Safe descriptor-based loading supports macOS (requires the OS `/usr/sbin/lsof`) and Linux (`/proc`). Images are fully decoded locally before upload. Limits: five images on OpenAI/Jev, eight on Perplexity; 5 MiB each, 10 MiB total and 16 megapixels each. Clef has stricter limits: four images, 4 MiB each and 8 MiB total. Perplexity allows at most eight image occurrences in shared state, including repeated references, and requires at most 2048 tiles of 32×32 pixels per image. Images are not silently resized. Text/JSON plus questions remain limited to 2 MiB and 32 questions.
 
-TypeSafe Jev images are experimental and require opt-in. Use PNG/JPEG. Each side must be 256–1568 pixels, with total area 78,400–2,458,624 pixels; resize or pad beforehand. These limits also apply to custom SystemOne image routes using Jev's assets protocol:
+Named hosted URLs on OpenAI do not require local file loading and work on other platforms. They are passed directly to the selected OpenAI-compatible endpoint, never downloaded by this package. The provider must be able to access them and enforces remote image format/size limits; local byte/pixel validation cannot inspect them. URLs must use HTTP(S), with no credentials or fragment. Do not send sensitive URLs unless you intend to share them with that endpoint.
+
+TypeSafe Jev images are experimental and require opt-in. Use PNG/JPEG. Each side must be **280–1568 pixels**, with total area 78,400–2,458,624 pixels; resize or pad beforehand. These limits also apply to custom SystemOne image routes using Jev's assets protocol:
 
 ```json
 {
@@ -378,6 +380,73 @@ TypeSafe Jev images are experimental and require opt-in. Use PNG/JPEG. Each side
 ```
 
 With an image, a question such as `{ "type": "box", "instructions": "Find the mug in the first image." }` returns normalized `top`, `bottom`, `left`, `right` edges and confidence. Box needs Jev 1.14 (`jev-preview` or `jev-1.14.0`) and both opt-ins. It is not production-grade localization. A box does not mean the object exists: pair it with a bool existence question when necessary.
+
+### Named images and composable image content
+
+Existing `images: ["photo.png"]` still attaches every image to shared state in order. Alternatively, use named descriptors:
+
+```json
+{
+  "state": { "scene": { "$image": "scene" } },
+  "images": [
+    { "id": "scene", "path": "scene.png" },
+    { "id": "target", "path": "reference.jpg" }
+  ],
+  "questions": {
+    "present": {
+      "type": "bool",
+      "instructions": ["Does the scene contain the object shown here? ", { "$image": "target" }]
+    }
+  }
+}
+```
+
+Image IDs must be unique, 1–64 letters/digits/underscores/hyphens. Each named image must be referenced, and every reference must resolve. The exact object `{"$image":"id"}` is reserved for image references, not ordinary JSON data. Named images are not also attached automatically. Ordinary provider-looking JSON, such as an `image_url` key, remains text/data and cannot inject native image parts.
+
+`instructions` and criterion descriptions accept either the existing text string or an ordered array of strings and image references. Jev preserves these as structured arrays with asset references. Other supported adapters concatenate adjacent text parts; include spaces/newlines where needed. For Jev, criterion descriptions can include visual examples:
+
+```json
+{
+  "type": "choice",
+  "instructions": "Which reference most resembles the scene?",
+  "criteria": {
+    "good": ["Correct assembly: ", { "$image": "good_example" }],
+    "bad": ["Incorrect assembly: ", { "$image": "bad_example" }]
+  }
+}
+```
+
+Declare these images in the surrounding request's `images` list. The same content form works for each score level and bool true/false descriptions on Jev.
+
+| Placement | Jev assets protocol | OpenAI Decisions | Perplexity Decisions | Clef / Flash |
+| --- | --- | --- | --- | --- |
+| Legacy shared local paths | Yes, opt-in | Yes | Yes | Yes |
+| Named references in shared state | Yes, opt-in | Yes | Yes | No |
+| Images in question instructions | Yes, opt-in | Yes | No | No |
+| Images in criteria | Yes, opt-in | No | No | No |
+| Named hosted URL descriptors | No | Yes | No | No |
+
+For OpenAI, replace a named local descriptor with `{"id":"target","url":"https://example.com/reference.jpg"}` and reference it in state or instructions. Nested JSON state is represented as text fragments interleaved with the referenced images; it is not an upstream JSON object containing embedded native parts. Unsupported placements fail locally before a request, including on fallback and comparison routes. No image is silently dropped or moved.
+
+Jev uploads each used named image once per provider call. Choice batching sends only assets referenced by that batch, so images used only by settled questions or later criteria are not sent unnecessarily. Reusing an image reference still counts each occurrence against Jev's expanded request limits; the server may reject a request after re-encoding/expansion. No automatic image splitting, resizing or multipart upload is performed.
+
+### Local bounding-box visualization and cropping
+
+Use **`classifier_box_image`** with a local image and a returned normalized box:
+
+```json
+{
+  "image": "scene.png",
+  "box": { "top": 0.25, "bottom": 0.82, "left": 0.44, "right": 0.84 },
+  "mode": "overlay"
+}
+```
+
+The default `overlay` mode draws the box. Set `mode: "crop"` to extract its region. This tool is local-only: no classifier request, provider charge, URL download or file write. It returns an inline PNG plus dimensions and the pixel-space box. Local input limits are 5 MiB and 16 megapixels; the PNG output is limited to 10 MiB. Coordinates refer to stored image dimensions, without automatic EXIF rotation. Verify you are using the same image that the provider evaluated.
+
+The library exports `renderClassifierBox(params, { cwd, signal? })`, which returns PNG base64 data, MIME type, dimensions, pixel box and mode. Saving the result is the caller's responsibility. A box is not proof that an object exists; check existence separately.
+
+Video descriptions in Cloudflare's model pages do not establish a hosted video API contract. Video, segmentation masks, multi-object box lists, image generation/editing and gateway image parity are not implemented.
 
 ## Custom providers
 
@@ -420,6 +489,9 @@ No provider calls are made by these commands. Live tests belong to the user:
 6. Configure your Foundry endpoint and deployment name, select `microsoft-api`, and verify bool/choice/score responses and token usage. Verify an image is rejected locally.
 7. Configure two `compare` pairs and explicitly invoke `classify_compare`; confirm labeled successes/errors, duration, unchanged defaults, and that cancellation prevents subsequent calls. Each valid entry may be billed.
 8. In your own controlled deployment, verify missing keys and HTTP 401/404/429 allow only configured fallbacks; duplicate routes are never called twice. Verify low confidence and refusals return normally without switching models.
+9. On Jev, enable the image/box flags and try the named scene/reference example above. Compare visual choice/score criteria, then a box plus a separate existence question. Verify repeated references and choice batching do not leave unreferenced assets. Try a 279-pixel side and confirm local rejection.
+10. On OpenAI, try one shared named local image plus a question-specific local image, then replace the latter with a public HTTPS descriptor. Confirm references stay in their intended placements. On Perplexity, try named state references and eight small images; instruction/criterion images should fail locally.
+11. Invoke `classifier_box_image` with the exact local scene and a returned box in both overlay and crop modes. Confirm pixel bounds and orientation visually, no files are written, invalid/reversed edges are rejected, and cancellation interrupts processing. Check EXIF-oriented photos carefully: no automatic rotation is applied.
 
 Provider schemas and previews can change; no live entitlement or model-accuracy claim is made by a local build.
 

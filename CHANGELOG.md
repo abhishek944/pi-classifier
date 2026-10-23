@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Added named local images and explicit `{$image:id}` references in shared state, Jev/OpenAI question instructions and Jev criteria, while retaining legacy shared image paths.
+- Added OpenAI hosted HTTP(S) image descriptors without local downloads. Unsupported image placements fail before provider requests; Jev batching includes only assets used by the current batch.
+- Added the local-only `classifier_box_image` tool and `renderClassifierBox` export for inline PNG box overlays or crops, without provider calls or automatic file writes.
+- Added current Perplexity v1.2/Flash/latest model catalog entries and support for up to eight Perplexity images. Corrected Jev's minimum side length to 280 pixels.
+- Documented capability differences, image-reference semantics, remote-image limits, experimental box caveats and user-owned verification steps. Video and unverified gateway image support remain excluded.
+
 ## 0.3.0
 
 - Added `classify_tree` and `classifyTree` for nested `roots`/`id`/`description`/`children` classification trees supplied inline or as bounded local UTF-8 JSON files. Results contain selected Level1/Level2/etc, model-versus-automatic steps, partial statuses and accumulated token/cost/provider-call totals.

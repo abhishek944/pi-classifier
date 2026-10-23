@@ -7,6 +7,7 @@ import {
 import { Type } from "typebox";
 import { classify, compareClassifiers } from "./classify.js";
 import { classifyTree } from "./tree.js";
+import { registerBoxTool } from "./box-tool.js";
 import {
   configuredRoutes,
   listModels,
@@ -16,12 +17,26 @@ import {
 import { updateProjectClassifierSettings } from "./settings-write.js";
 import { ClassifierError, userError } from "./types.js";
 
-const shortText = Type.String({ maxLength: 4096 });
+const imageReference = Type.Object(
+  { $image: Type.String({ pattern: "^[a-zA-Z0-9_-]{1,64}$" }) },
+  { additionalProperties: false },
+);
+function imageContent(maxLength: number, nonempty = false) {
+  return Type.Union([
+    Type.String({ maxLength, ...(nonempty ? { minLength: 1 } : {}) }),
+    Type.Array(Type.Union([Type.String({ maxLength }), imageReference]), {
+      minItems: 1, maxItems: 128,
+      description: "Ordered text and explicit {$image:id} references. References require named images; supported placements depend on the route.",
+    }),
+  ]);
+}
+const shortText = imageContent(4096);
+const instructionContent = imageContent(16384, true);
 const question = Type.Union([
   Type.Object(
     {
       type: Type.Literal("bool"),
-      instructions: Type.String({ minLength: 1, maxLength: 16384 }),
+      instructions: instructionContent,
       criteria: Type.Optional(
         Type.Object(
           { true: Type.Optional(shortText), false: Type.Optional(shortText) },
@@ -34,7 +49,7 @@ const question = Type.Union([
   Type.Object(
     {
       type: Type.Literal("choice"),
-      instructions: Type.String({ minLength: 1, maxLength: 16384 }),
+      instructions: instructionContent,
       criteria: Type.Record(
         Type.String({ minLength: 1, maxLength: 128 }),
         shortText,
@@ -46,8 +61,8 @@ const question = Type.Union([
   Type.Object(
     {
       type: Type.Literal("score"),
-      instructions: Type.String({ minLength: 1, maxLength: 16384 }),
-      criteria: Type.Array(Type.String({ minLength: 1, maxLength: 4096 }), {
+      instructions: instructionContent,
+      criteria: Type.Array(imageContent(4096, true), {
         minItems: 2,
         maxItems: 10,
       }),
@@ -57,7 +72,7 @@ const question = Type.Union([
   Type.Object(
     {
       type: Type.Literal("box"),
-      instructions: Type.String({ minLength: 1, maxLength: 16384 }),
+      instructions: instructionContent,
     },
     { additionalProperties: false },
   ),
@@ -73,7 +88,7 @@ export const classifyParameters = Type.Object(
       ],
       {
         description:
-          "Text or JSON data to classify. All questions refer to this same state.",
+          "Text or JSON data to classify. Use explicit {$image:id} objects to place named images in state on Jev, OpenAI or Perplexity. Other JSON remains data. All questions refer to this same state.",
       },
     ),
     questions: Type.Record(
@@ -82,10 +97,19 @@ export const classifyParameters = Type.Object(
       { minProperties: 1, maxProperties: 32 },
     ),
     images: Type.Optional(
-      Type.Array(Type.String({ minLength: 1, maxLength: 4096 }), {
-        maxItems: 5,
-        description:
-          "Local PNG/JPEG/WebP files inside cwd, in order. No URLs, symlinks or inline base64. Requires an image-capable model.",
+      Type.Array(Type.Union([
+        Type.String({ minLength: 1, maxLength: 4096 }),
+        Type.Object({
+          id: Type.String({ pattern: "^[a-zA-Z0-9_-]{1,64}$" }),
+          path: Type.String({ minLength: 1, maxLength: 4096 }),
+        }, { additionalProperties: false }),
+        Type.Object({
+          id: Type.String({ pattern: "^[a-zA-Z0-9_-]{1,64}$" }),
+          url: Type.String({ minLength: 1, maxLength: 4096 }),
+        }, { additionalProperties: false }),
+      ]), {
+        maxItems: 8,
+        description: "Legacy local paths are shared in order. Named {id,path} or {id,url} images must be referenced using {$image:id} in state or supported question content. URLs are OpenAI-only and sent to the provider, never fetched locally. No inline base64 or symlinks. Limits: Perplexity 8 images, Clef 4, others 5.",
       }),
     ),
   },
@@ -273,12 +297,13 @@ export const classifyTreeOutput = Type.Object({
 });
 
 export default function piClassifier(pi: ExtensionAPI): void {
+  registerBoxTool(pi);
   pi.registerTool(
     defineTool({
       name: "classify",
       label: "Classify",
       description:
-        "Ask a decision model typed questions about text, JSON and supported local images. Returns bool probabilities, choices with probabilities, or scores, plus reported token usage and estimated USD cost (or an explicit unavailable reason). Experimental box answers require explicit Jev configuration. Provider/model are fixed by pi-classifier.default (or legacy defaultProvider/defaultModel); this tool cannot override them. API-key authentication is independent of Codex chat login. Only explicitly configured fallback routes may be used after a missing key or HTTP 401/404/429 before any batch has completed; never after uncertainty, refusals, timeouts or network failures. Use /classifier list or status to inspect configuration.",
+        "Ask a decision model typed questions about text, JSON and supported images. Legacy image paths are shared; named path/url descriptors require explicit {$image:id} references. Jev supports images in instructions/criteria; OpenAI supports instruction images and hosted URLs. Unsupported placements fail locally. Returns bool probabilities, choices with probabilities, or scores, plus reported token usage and estimated USD cost (or an explicit unavailable reason). Experimental box answers require explicit Jev configuration. Provider/model are fixed by pi-classifier.default (or legacy defaultProvider/defaultModel); this tool cannot override them. API-key authentication is independent of Codex chat login. Only explicitly configured fallback routes may be used after a missing key or HTTP 401/404/429 before any batch has completed; never after uncertainty, refusals, timeouts or network failures. Use /classifier list or status to inspect configuration.",
       promptSnippet:
         "Classify text, JSON or supported images into typed probabilistic decisions.",
       promptGuidelines: [

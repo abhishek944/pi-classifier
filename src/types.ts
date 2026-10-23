@@ -5,15 +5,23 @@ export type ApiStyle =
   | "cloudflare-system-one"
   | "microsoft-system-one";
 
+/** Explicit references are resolved only from the request's named images. */
+export type ImageReference = { $image: string };
+export type QuestionContent = string | (string | ImageReference)[];
+export type ImageInput =
+  | string
+  | { id: string; path: string }
+  | { id: string; url: string };
+
 export type Question =
   | {
       type: "bool";
-      instructions: string;
-      criteria?: { true?: string; false?: string };
+      instructions: QuestionContent;
+      criteria?: { true?: QuestionContent; false?: QuestionContent };
     }
-  | { type: "choice"; instructions: string; criteria: Record<string, string> }
-  | { type: "score"; instructions: string; criteria: string[] }
-  | { type: "box"; instructions: string };
+  | { type: "choice"; instructions: QuestionContent; criteria: Record<string, QuestionContent> }
+  | { type: "score"; instructions: QuestionContent; criteria: QuestionContent[] }
+  | { type: "box"; instructions: QuestionContent };
 
 export type Answer =
   | { type: "bool"; probability: number }
@@ -44,8 +52,8 @@ export type Answer =
 export interface ClassifyParams {
   state: string | Record<string, unknown> | unknown[];
   questions: Record<string, Question>;
-  /** Regular PNG/JPEG/WebP files inside cwd; attached in this order. */
-  images?: string[];
+  /** Legacy paths are shared in order. Named images require explicit {$image:id} references. */
+  images?: ImageInput[];
 }
 
 export type ClassificationTreeNode = {
@@ -60,7 +68,7 @@ export type ClassifyTreeParams = {
   state: ClassifyParams["state"];
   tree: string | ClassificationTree;
   instructions?: string;
-  images?: string[];
+  images?: ImageInput[];
 };
 
 export type TreeStep = {
@@ -182,12 +190,14 @@ export interface ResolvedModel {
   maxChoices?: number;
 }
 
-export interface PreparedImage {
+export interface PreparedLocalImage {
   data: string;
   mimeType: "image/png" | "image/jpeg" | "image/webp";
   width: number;
   height: number;
 }
+
+export type PreparedImage = (PreparedLocalImage | { url: string }) & { id?: string };
 
 export interface PreparedInput {
   state: ClassifyParams["state"];

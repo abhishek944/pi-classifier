@@ -7,6 +7,7 @@ import {
   type ClassifierSettings,
   type PreparedInput,
   type Question,
+  type QuestionContent,
   type ResolvedModel,
 } from "./types.js";
 
@@ -29,7 +30,7 @@ export function choicePolicy(settings: ClassifierSettings): ChoicePolicy {
 
 type ChoicePlan = {
   question: Extract<Question, { type: "choice" }>;
-  entries: [string, string][];
+  entries: [string, QuestionContent][];
   offset: number;
   sentinel: string;
 };

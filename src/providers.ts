@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { imageContentParts, imageReferences, imageUrl, mapImageReferences, namedImage, questionImageReferences } from "./image-content.js";
 import { postJson } from "./http.js";
 import { estimateCost, tokenCount } from "./cost.js";
 import {
@@ -6,7 +7,7 @@ import {
   isRecord,
   type Answer,
   type ClassifierResult,
-  type PreparedImage,
+  type QuestionContent,
   type PreparedInput,
   type Question,
   type ResolvedModel,
@@ -129,8 +130,16 @@ function finish(
   return result;
 }
 
-function dataUrl(image: PreparedImage): string {
-  return "data:" + image.mimeType + ";base64," + image.data;
+function textContent(value: QuestionContent): string {
+  if (typeof value === "string") return value;
+  if (value.some((part) => typeof part !== "string"))
+    throw new ClassifierError("capability", "This content placement does not support images on the selected route.");
+  return value.join("");
+}
+
+function openAiContent(value: unknown, input: PreparedInput): unknown[] {
+  return imageContentParts(value, (id) => ({ type: "input_image", image_url: imageUrl(namedImage(input.images, id)) }))
+    .map((part) => typeof part === "string" ? { type: "input_text", text: part } : part);
 }
 
 /* Answer parsing for map-shaped answers (Perplexity, System One, Clef) --- */
@@ -380,66 +389,42 @@ function parseTypedAnswers(
 
 /* OpenAI Decisions -------------------------------------------------------- */
 
-function predicateInstructions(
-  question: Extract<Question, { type: "bool" }>,
-): string {
+function predicateInstructions(question: Extract<Question, { type: "bool" }>): QuestionContent {
   const meanings: string[] = [];
-  if (question.criteria?.true)
-    meanings.push("True means: " + question.criteria.true);
-  if (question.criteria?.false)
-    meanings.push("False means: " + question.criteria.false);
-  return meanings.length > 0
-    ? question.instructions + "\n" + meanings.join("\n")
-    : question.instructions;
+  if (question.criteria?.true) meanings.push("True means: " + textContent(question.criteria.true));
+  if (question.criteria?.false) meanings.push("False means: " + textContent(question.criteria.false));
+  if (meanings.length === 0) return question.instructions;
+  const suffix = "\n" + meanings.join("\n");
+  return typeof question.instructions === "string" ? question.instructions + suffix : [...question.instructions, suffix];
 }
 
-function openAiQuestion(
-  id: string,
-  question: Question,
-): Record<string, unknown> {
-  if (question.type === "bool")
-    return {
-      type: "predicate",
-      name: id,
-      instructions: predicateInstructions(question),
-    };
-  if (question.type === "choice") {
-    return {
-      type: "choice",
-      name: id,
-      instructions: question.instructions,
-      choices: Object.entries(question.criteria).map(
-        ([value, description]) => ({ value, description }),
-      ),
-    };
-  }
-  if (question.type === "score") {
-    return {
-      type: "score",
-      name: id,
-      instructions: question.instructions,
-      levels: question.criteria.map((label) => ({ label })),
-    };
-  }
+function openAiQuestion(id: string, question: Question, input: PreparedInput): Record<string, unknown> {
+  const instructions = question.type === "bool" ? predicateInstructions(question) : question.instructions;
+  const wireInstructions = typeof instructions === "string" ? instructions : openAiContent(instructions, input);
+  if (question.type === "bool") return { type: "predicate", name: id, instructions: wireInstructions };
+  if (question.type === "choice") return {
+    type: "choice", name: id, instructions: wireInstructions,
+    choices: Object.entries(question.criteria).map(([value, description]) => ({ value, description: textContent(description) })),
+  };
+  if (question.type === "score") return {
+    type: "score", name: id, instructions: wireInstructions,
+    levels: question.criteria.map((label) => ({ label: textContent(label) })),
+  };
   throw unsupportedBox();
 }
 
 function openAiInput(input: PreparedInput): unknown {
-  const text =
-    typeof input.state === "string" ? input.state : JSON.stringify(input.state);
-  if (input.images.length === 0) return text;
-  return [
-    {
-      role: "user",
-      content: [
-        { type: "input_text", text },
-        ...input.images.map((image) => ({
-          type: "input_image",
-          image_url: dataUrl(image),
-        })),
-      ],
-    },
-  ];
+  const text = typeof input.state === "string" ? input.state : JSON.stringify(input.state);
+  const shared = input.images.filter((image) => image.id === undefined);
+  const references = imageReferences(input.state);
+  if (shared.length === 0 && references.length === 0) return text;
+  return [{
+    role: "user",
+    content: [
+      ...(references.length ? openAiContent(input.state, input) : [{ type: "input_text", text }]),
+      ...shared.map((image) => ({ type: "input_image", image_url: imageUrl(image) })),
+    ],
+  }];
 }
 
 function openAiChoiceProbabilities(
@@ -597,7 +582,7 @@ async function classifyOpenAi(
   signal?: AbortSignal,
 ): Promise<ClassifierResult> {
   const questions = Object.entries(input.questions).map(([id, question]) =>
-    openAiQuestion(id, question),
+    openAiQuestion(id, question, input),
   );
   const { body, requestId } = await postJson(
     route,
@@ -624,50 +609,41 @@ async function classifyOpenAi(
 function systemOneQuestions(
   questions: Record<string, Question>,
   allowBox: boolean,
+  content: (value: QuestionContent) => unknown = textContent,
 ): Record<string, unknown> {
-  // Question IDs may be "__proto__", so the wire map is collected without a prototype.
   const result = Object.create(null) as Record<string, unknown>;
   for (const [id, question] of Object.entries(questions)) {
-    if (question.type === "bool") {
-      const wire: Record<string, unknown> = {
-        type: "noul",
-        instructions: question.instructions,
-      };
-      if (question.criteria !== undefined) wire.criteria = question.criteria;
-      result[id] = wire;
-    } else if (question.type === "choice") {
-      result[id] = {
-        type: "choice",
-        instructions: question.instructions,
-        criteria: question.criteria,
-      };
-    } else if (question.type === "score") {
-      result[id] = {
-        type: "score",
-        instructions: question.instructions,
-        criteria: question.criteria,
-      };
-    } else if (allowBox) {
-      result[id] = { type: "box", instructions: question.instructions };
-    } else {
-      throw unsupportedBox();
+    if (question.type === "box") {
+      if (!allowBox) throw unsupportedBox();
+      result[id] = { type: "box", instructions: content(question.instructions) };
+      continue;
     }
+    const wire: Record<string, unknown> = {
+      type: question.type === "bool" ? "noul" : question.type,
+      instructions: content(question.instructions),
+    };
+    if (question.type === "score") wire.criteria = question.criteria.map(content);
+    else if (question.criteria !== undefined) wire.criteria = Object.fromEntries(
+      Object.entries(question.criteria).map(([key, value]) => [key, content(value)]),
+    );
+    result[id] = wire;
   }
   return result;
 }
 
 function perplexityState(input: PreparedInput): unknown {
-  // Perplexity interprets native image parts inside state. Caller JSON is text;
-  // only locally validated images may become provider-native image parts.
-  const text =
-    typeof input.state === "string" ? input.state : JSON.stringify(input.state);
-  if (input.images.length === 0) return text;
+  // Only explicit references become native image parts; other JSON stays text.
+  const text = typeof input.state === "string" ? input.state : JSON.stringify(input.state);
+  const shared = input.images.filter((image) => image.id === undefined);
+  const references = imageReferences(input.state);
+  if (shared.length + references.length > 8)
+    throw new ClassifierError("input", "Perplexity accepts at most eight image occurrences per question.");
+  if (shared.length === 0 && references.length === 0) return text;
   return [
-    text,
-    ...input.images.map((image) => ({
-      type: "image_url",
-      image_url: { url: dataUrl(image) },
-    })),
+    ...(references.length ? imageContentParts(input.state, (id) => ({
+      type: "image_url", image_url: { url: imageUrl(namedImage(input.images, id)) },
+    })) : [text]),
+    ...shared.map((image) => ({ type: "image_url", image_url: { url: imageUrl(image) } })),
   ];
 }
 
@@ -775,24 +751,35 @@ async function classifySystemOne(
   signal?: AbortSignal,
 ): Promise<ClassifierResult> {
   const assets = Object.create(null) as Record<string, unknown>;
-  const refs: string[] = [];
+  const sharedRefs: string[] = [];
+  const namedRefs = new Map<string, string>();
+  const used = new Set([...imageReferences(input.state), ...questionImageReferences(input.questions)]);
   for (const image of input.images) {
+    // Batching can remove a question or a criterion. Jev rejects unused assets.
+    if (image.id !== undefined && !used.has(image.id)) continue;
+    if ("url" in image) throw new ClassifierError("capability", "Jev assets require local images.");
     const ref = randomUUID();
-    refs.push(ref);
+    if (image.id === undefined) sharedRefs.push(ref);
+    else namedRefs.set(image.id, ref);
     assets[ref] = {
-      type: "image",
-      format: image.mimeType === "image/png" ? "png" : "jpg",
+      type: "image", format: image.mimeType === "image/png" ? "png" : "jpg",
       data_base64: image.data,
     };
   }
+  const reference = (id: string): string => {
+    const ref = namedRefs.get(id);
+    if (!ref) throw new ClassifierError("input", "Unknown named image reference.");
+    return ref;
+  };
+  const state = mapImageReferences(input.state, reference) as PreparedInput["state"];
   const payload: Record<string, unknown> = {
     model: route.model,
-    state: refs.length === 0 ? input.state : withImageRefs(input.state, refs),
-    questions: systemOneQuestions(input.questions, true),
+    state: sharedRefs.length ? withImageRefs(state, sharedRefs) : state,
+    questions: systemOneQuestions(input.questions, true, (value) => mapImageReferences(value, reference)),
   };
-  if (refs.length > 0) payload.assets = assets;
+  if (Object.keys(assets).length > 0) payload.assets = assets;
   const experimentalHeader =
-    refs.length > 0 ||
+    Object.keys(assets).length > 0 ||
     Object.values(input.questions).some((question) => question.type === "box");
   const extraHeaders = experimentalHeader
     ? { "TypeSafe-Danger-Zone-Images": "true" }
@@ -861,10 +848,10 @@ async function classifyCloudflare(
       questions: systemOneQuestions(input.questions, false),
     };
     if (input.images.length > 0) {
-      payload.images = input.images.map((image) => ({
-        content_type: image.mimeType,
-        base64: image.data,
-      }));
+      payload.images = input.images.map((image) => {
+        if ("url" in image) throw new ClassifierError("capability", "Clef requires local images.");
+        return { content_type: image.mimeType, base64: image.data };
+      });
     }
     path = "run/" + route.model;
   } else {

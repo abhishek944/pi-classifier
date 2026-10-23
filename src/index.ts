@@ -1,9 +1,14 @@
 export { classify, compareClassifiers } from "./classify.js";
 export { classifyTree } from "./tree.js";
+export { renderClassifierBox } from "./box.js";
+export type { ClassifierBoxMode, ClassifierBoxEdges, ClassifierBoxPixelBox, ClassifierBoxResult } from "./box.js";
 export { loadClassifierSettings, resolveModel, listModels } from "./config.js";
 export type {
   Answer,
   Question,
+  QuestionContent,
+  ImageInput,
+  ImageReference,
   ClassifierResult,
   ClassifierCost,
   TokenPricing,

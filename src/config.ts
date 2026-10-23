@@ -47,6 +47,10 @@ export const BUILT_INS = [
     credentialProvider: "perplexity",
     envVar: "PERPLEXITY_API_KEY",
     models: [
+      { id: "pplx-decider-v1.2", input: ["text", "image"] },
+      { id: "pplx-decider-flash-v1.2", input: ["text", "image"] },
+      { id: "pplx-decider-latest", input: ["text", "image"] },
+      { id: "pplx-decider-flash-latest", input: ["text", "image"] },
       { id: "pplx-decider-v1.1-27b", input: ["text", "image"] },
       { id: "pplx-decider-v1-27b", input: ["text", "image"] },
     ],
