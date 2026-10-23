@@ -22,6 +22,9 @@ export type Answer =
       choice: string;
       probabilities: Record<string, number>;
       confidence: number;
+      /** Present when probabilities cover one internally processed batch, not the full list. */
+      probabilityScope?: "batch";
+      noneOfAboveProbability?: number;
     }
   | {
       type: "score";
@@ -34,7 +37,9 @@ export type Answer =
       box: { top: number; bottom: number; left: number; right: number };
       confidence: number;
     }
-  | { type: "refusal" };
+  | { type: "refusal" }
+  | { type: "no_match" }
+  | { type: "ambiguous" };
 
 export interface ClassifyParams {
   state: string | Record<string, unknown> | unknown[];
@@ -43,12 +48,85 @@ export interface ClassifyParams {
   images?: string[];
 }
 
+export type ClassificationTreeNode = {
+  id: string;
+  description?: string;
+  children?: ClassificationTreeNode[];
+};
+
+export type ClassificationTree = { roots: ClassificationTreeNode[] };
+
+export type ClassifyTreeParams = {
+  state: ClassifyParams["state"];
+  tree: string | ClassificationTree;
+  instructions?: string;
+  images?: string[];
+};
+
+export type TreeStep = {
+  level: number;
+  id: string;
+  source: "automatic" | "model";
+  confidence?: number;
+  probabilityScope?: "siblings" | "batch";
+  noneOfAboveProbability?: number;
+};
+
+export type ClassifierTreeResult = {
+  provider: string;
+  model: string;
+  status: "complete" | "no_match" | "ambiguous" | "refusal";
+  levels: Record<string, string>;
+  steps: TreeStep[];
+  providerCalls: number;
+  cost: ClassifierCost;
+  usage?: NonNullable<ClassifierResult["usage"]>;
+  attemptedRoutes?: ClassifierRoute[];
+};
+
 export interface ModelDefinition {
   id: string;
   name?: string;
   input?: ("text" | "image")[];
   box?: boolean;
 }
+
+/** USD per million tokens. Cache counts, when reported, are part of input tokens. */
+export type TokenPricing = {
+  inputPerMillion: number;
+  outputPerMillion: number;
+  cachedInputPerMillion?: number;
+  cacheWritePerMillion?: number;
+};
+
+export type ClassifierCost =
+  | {
+      status: "estimated";
+      currency: "USD";
+      input: number;
+      output: number;
+      total: number;
+      source: "builtin" | "configured";
+      rates: TokenPricing;
+    }
+  | {
+      status: "estimated";
+      currency: "USD";
+      input: number;
+      output: number;
+      total: number;
+      source: "aggregated";
+    }
+  | {
+      status: "unavailable";
+      currency: "USD";
+      reason:
+        | "unknown_pricing"
+        | "missing_usage"
+        | "invalid_usage"
+        | "missing_cache_pricing"
+        | "calculation_overflow";
+    };
 
 export interface ProviderSettings {
   apiKey?: string;
@@ -57,6 +135,10 @@ export interface ProviderSettings {
   accountId?: string;
   experimentalImages?: boolean;
   experimentalBox?: boolean;
+  /** Model ID (or Azure deployment name) to explicit token rates. */
+  pricing?: Record<string, TokenPricing>;
+  /** Verified wire choice limit; needed for batching on endpoints without a known limit. */
+  maxChoices?: number;
 }
 
 export interface CustomProviderSettings extends ProviderSettings {
@@ -70,6 +152,8 @@ export type ClassifierRoute = {
 };
 
 export interface ClassifierSettings {
+  none_of_above_choice?: boolean;
+  remove_choice_limits?: boolean;
   default?: ClassifierRoute;
   fallback?: ClassifierRoute[];
   compare?: ClassifierRoute[];
@@ -94,6 +178,8 @@ export interface ResolvedModel {
   box: boolean;
   experimentalImages: boolean;
   requestTimeoutMs: number;
+  pricing?: { rates: TokenPricing; source: "builtin" | "configured" };
+  maxChoices?: number;
 }
 
 export interface PreparedImage {
@@ -113,7 +199,17 @@ export type ClassifierResult = {
   provider: string;
   model: string;
   answers: Record<string, Answer>;
-  usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    cachedInputTokens?: number;
+    cacheWriteTokens?: number;
+  };
+  /** Successful provider requests made by automatic choice processing. */
+  providerCalls?: number;
+  /** Estimate for completed requests in this result, not an invoice or total of failed attempts. */
+  cost: ClassifierCost;
   requestId?: string;
   attemptedRoutes?: ClassifierRoute[];
 };

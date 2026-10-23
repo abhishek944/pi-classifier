@@ -9,7 +9,7 @@ One configured default, optional selective fallback, and explicit model comparis
 Requires Node.js 22.19+ and Pi 1.2+. Install the tagged release from GitHub:
 
 ```sh
-pi install git:github.com/abhishek944/pi-classifier@v0.2.0
+pi install git:github.com/abhishek944/pi-classifier@v0.3.0
 ```
 
 The Pi package entrypoint is TypeScript source, so Git installs do not depend on committed build artifacts or a TypeScript compiler. Runtime dependencies are installed by Pi. The compiled `dist` exports remain available for library consumers after a build.
@@ -30,7 +30,7 @@ To install persistently after trying it:
 pi install /absolute/path/to/pi-classifier
 ```
 
-The package version and Git tag are `0.2.0` / `v0.2.0`. Installation is explicit. This release is prepared for GitHub; npm publication is a separate manual step.
+The package version and Git tag are `0.3.0` / `v0.3.0`. Installation is explicit. This release is prepared for GitHub; npm publication is a separate manual step.
 
 ## Configuration: same shape as pi-image-gen
 
@@ -130,9 +130,193 @@ classify({
 });
 ```
 
-The tool takes no provider/model parameter. Its structured result identifies the configured route and model, typed answers, reported token usage and an available request ID. `bool.probability` is the probability of true; `choice` includes a probability per label and confidence; `score` is a probability-weighted level index (starting at zero), not necessarily an integer. Refusals are explicit typed answers. Token counts are reported, but this initial version does not estimate monetary cost or add it to Pi's session billing totals.
+The tool takes no provider/model parameter. Its structured result identifies the configured route and model, typed answers, reported token usage, estimated USD cost (or an explicit unavailable reason) and an available request ID. `bool.probability` is the probability of true; `choice` includes a probability per label and confidence; `score` is a probability-weighted level index (starting at zero), not necessarily an integer. Refusals are explicit typed answers. Token counts are reported when available. Each successful result includes `cost`; classifier spending is not added to Pi's session billing totals. See [Per-call costs](#per-call-costs).
 
 Provider results are checked for probability ranges/distribution sums and decision consistency (selected choices must be most likely; supplied score distributions must match the expected score within rounding tolerance). Low confidence is a valid answer, not an error. Calibrate thresholds on your own data; scores from different providers are not interchangeable.
+
+## Classification trees: `classify_tree`
+
+Use `classify_tree` to follow a **nested classification tree**, rather than supply every leaf as one flat choice list. The extension orchestrates ordinary model decisions; this is not a native provider tree API. Existing `classify` and `classify_compare` behavior is unchanged.
+
+A classification tree is an object with `roots`. Each node has an `id`, optional `description`, and optional `children`:
+
+```json
+{
+  "roots": [
+    {
+      "id": "a",
+      "description": "Describe the domain covered by category a and its descendants.",
+      "children": [
+        { "id": "b", "children": [{ "id": "c" }] },
+        { "id": "c", "children": [{ "id": "d" }] }
+      ]
+    },
+    { "id": "c" },
+    { "id": "d", "children": [{ "id": "e" }] }
+  ]
+}
+```
+
+IDs must be non-empty, at most 128 characters, and unique **among siblings**. Root `c` and `a > c` are different nodes. Descriptions are at most 4096 characters; use meaningful descriptions to explain which parent branch to choose. Missing or empty `children` means leaf. Only `roots`, `id`, `description` and `children` are supported; internal-node stopping flags, path-list imports and graph references are not implemented.
+
+Supply the same shape inline or by local file:
+
+```js
+classify_tree({
+  state: "The content to classify",
+  tree: "./classification-tree.json",
+  instructions: "Choose the most appropriate category for this content."
+});
+
+classify_tree({
+  state: { ticket: "Refund requested for a duplicate payment." },
+  tree: {
+    roots: [
+      { id: "billing", description: "Charges, invoices and refunds" },
+      { id: "technical", description: "Errors, outages and integration problems" }
+    ]
+  }
+});
+```
+
+`instructions` is optional and at most 8192 characters. Text/JSON `state` and optional local `images` use the existing classifier input rules. No provider/model override is accepted. The library exports `classifyTree(params, { settings, cwd, signal? })` and the `ClassificationTree`, `ClassificationTreeNode`, `ClassifyTreeParams`, `TreeStep` and `ClassifierTreeResult` types.
+
+### Traversal and results
+
+The example first chooses among `a`, `c` and `d`. After choosing `a`, it chooses between `b` and `c`. If it chooses `b`, its sole child `c` is automatic. Relevant result fields are:
+
+```json
+{
+  "status": "complete",
+  "levels": { "Level1": "a", "Level2": "b", "Level3": "c" },
+  "steps": [
+    { "level": 1, "id": "a", "source": "model", "confidence": 0.9, "probabilityScope": "siblings" },
+    { "level": 2, "id": "b", "source": "model", "confidence": 0.8, "probabilityScope": "siblings" },
+    { "level": 3, "id": "c", "source": "automatic" }
+  ],
+  "providerCalls": 2
+}
+```
+
+The confidence values above are illustrative. Full results also identify the configured/selected provider and model and include estimated `cost` plus reported `usage` when complete. Model confidence describes its sibling decision (or one batch), **not the whole path**. No artificial confidence is assigned to automatic steps.
+
+- A sole sibling is followed automatically, including a sole root. This is structural inference, not model confirmation. It intentionally bypasses a possible NONE rejection of that sole option even when NONE is enabled.
+- An entirely forced chain makes **zero provider calls**, needs no API key, and returns genuine zero token usage and estimated zero cost. It still requires a valid configured route. `complete` means a leaf was reached, not that the model verified the input fits that chain.
+- NONE, strict ties and refusals stop the traversal with `status: "no_match"`, `"ambiguous"` or `"refusal"`. `levels` and `steps` retain only the selected prefix; no deeper category is fabricated. Exact top ties stop even when NONE is disabled.
+- The selected parent path and current sibling descriptions inform each question. Unselected descendant branches are not uploaded wholesale, so parent descriptions must explain their coverage. Selection is greedy and cannot recover a wrong parent; no global best-path or calibrated path-probability claim is made.
+- Configured NONE/batching behavior applies at each branching node. A wide level can consume multiple provider requests; `providerCalls`, usage and cost account for inner batches and all completed model decisions. Missing usage or unavailable prices do not become complete-looking numeric subtotals.
+- The first actual decision may use configured selective fallback. After a successful decision the actual provider/model is pinned for the rest of that traversal; later failures do not replay completed levels on another route. Failures/cancellation may still have billed completed work. Images use the ordinary classifier validation and upload behavior on each branching call.
+
+### Local-file and size limits
+
+Classification trees must fit **2 MiB and 32 levels**; the full node structure is validated before any model call. Local files must be valid UTF-8 JSON regular files inside the session cwd with no symlink path components or URLs. Descriptor-based containment checks reuse the existing local-image boundary and support macOS/Linux; inline classification tree works on other platforms. Files are read once per `classify_tree` invocation; no persistent classification tree registry or cache is introduced.
+
+Original classifier state/image/request protections remain. Each constructed branch question must fit the existing input limits, including its selected-path context. Tree results are bounded to 40 KiB. User-owned live verification should compare inline and file inputs, zero-call chains, deeper NONE/tie outcomes, wide sibling batching, and provider billing totals.
+
+## Per-call costs
+
+Every successful `classify` result and each successful `classify_compare` entry includes one of:
+
+```json
+{
+  "cost": {
+    "status": "estimated",
+    "currency": "USD",
+    "input": 0.000042,
+    "output": 0,
+    "total": 0.000042,
+    "source": "builtin",
+    "rates": { "inputPerMillion": 0.042, "outputPerMillion": 0 }
+  }
+}
+```
+
+This example uses 1,000 Jev input tokens. Amounts are not rounded to cents; doing so would hide most classifier charges. `source` is `builtin` for the bundled standard public rates or `configured` for explicit rates. `rates` contains the effective USD-per-million rates used. Multi-call choice processing sums all completed calls and uses `source: "aggregated"` without a single misleading rates table; `providerCalls` reports the number of completed provider requests. Usage is omitted if any completed call lacks usage, and aggregate cost is unavailable if any call lacks an estimate. These are estimates, not provider invoices: taxes, credits, free allowances, account discounts and unreported billable activity are not included. There is no network pricing lookup.
+
+| Official route/model | Input USD / 1M tokens | Output USD / 1M tokens |
+| --- | ---: | ---: |
+| OpenAI Decisions `gpt-6-luna` | 0.10 | 0 |
+| TypeSafe `jev-1.13.0`, `jev-1.14.0`, `jev-latest`, `jev-preview` | 0.042 | 0 |
+| Perplexity `pplx-decider-v1.2`, `pplx-decider-latest`, `pplx-decider-v1.1-27b`, `pplx-decider-v1-27b` | 0.02 | 0 |
+| Perplexity `pplx-decider-flash-v1.2`, `pplx-decider-flash-latest` | 0.01 | 0 |
+| Cloudflare `@cf/cloudflare/clef` | 0.24 | 0 |
+| Cloudflare `@cf/cloudflare/clef-flash` | 0.038 | 0 |
+| Cloudflare `typesafe/jev` | 0.042 | 0 |
+
+Sources: [OpenAI Decisions pricing](https://developers.openai.com/api/docs/guides/decisions#pricing-and-availability), [OpenAI rates](https://developers.openai.com/api/docs/pricing), [TypeSafe models](https://docs.typesafe.ai/models), [Perplexity Decisions](https://docs.perplexity.ai/docs/decisions/quickstart#pricing), [Clef](https://developers.cloudflare.com/workers-ai/models/clef/), [Clef Flash](https://developers.cloudflare.com/workers-ai/models/clef-flash/), [Cloudflare Jev](https://developers.cloudflare.com/ai/models/typesafe/jev/). Aliases can move and public prices can change; explicit overrides take precedence. Perplexity's [model names](https://docs.perplexity.ai/docs/decisions/quickstart#model-names) documentation maps the older v1/v1.1 IDs in the discovery catalog to v1.2 and bills them at its rate. New text model IDs may already be selected through settings, but this cost feature does not change image capability declarations.
+
+When reported, cache reads and writes are exposed as `usage.cachedInputTokens` and `usage.cacheWriteTokens`. They are **included** in input tokens, not additional tokens. Input cost is `(ordinary input × input rate + cache reads × cached-input rate + cache writes × cache-write rate) / 1,000,000`; output cost uses its separate rate. OpenAI's bundled cached-input rate is $0.01/M and default 30-minute write rate is $0.125/M, with all input rates doubled above 272,000 input tokens. Cloudflare Jev's bundled cached-input rate is zero. Unexpected 12-hour writes are unavailable rather than priced as 30-minute writes.
+
+If pricing or usable token counts are missing, `cost` is `{ "status": "unavailable", "currency": "USD", "reason": "unknown_pricing" }` (or `missing_usage`, `invalid_usage`, `missing_cache_pricing`, `calculation_overflow`). No numeric amounts are returned in that case. Zero means a calculated zero, never an unknown charge. Failed or cancelled calls may still be billable but do not have reliable cost results; a fallback success reports only the successful request, not a total for prior attempts. Comparison callers must not treat a sum of available estimates as complete if any entries failed or have unavailable costs.
+
+### Explicit deployment, gateway and custom pricing
+
+Set `providers.<id>.pricing` to a map keyed by the **selected model ID** (Azure deployment name for Microsoft). Rates are non-negative finite USD per million tokens; input and output rates are required. Cache rates are optional, but reported cache activity needs the matching rate. Configured rates replace, rather than merge with, bundled rates. Custom providers accept the same `pricing` map.
+
+```json
+{
+  "pi-classifier": {
+    "providers": {
+      "microsoft": {
+        "pricing": {
+          "my-decision-deployment": {
+            "inputPerMillion": 0.1,
+            "outputPerMillion": 0
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The numbers above are illustrative, **not a claim about Azure pricing**. Use your deployment's actual rates. Optional keys are `cachedInputPerMillion` and `cacheWritePerMillion`. Overrides specify effective rates; no automatic long-context multiplier is applied to them. Microsoft deployments, OpenRouter, unverified model IDs and custom or regional endpoints require verified explicit rates. Built-in prices apply only to exact known models on their official endpoint; a compatible gateway does not inherit the upstream provider's price. Misconfigured selected rates fail before a request; missing rates do not prevent classification.
+
+## Choice limits by provider
+
+The artificial **64-choice cap has been removed** from both runtime validation and the tool schema. Known official model routes use their documented 255-option wire maximum. Unknown model/endpoint limits are left to the provider unless you configure `providers.<id>.maxChoices` (also available on custom providers). The package still accepts **1–32 questions per call**. The 128-character limit applies to an option's name, not to the option count.
+
+| Provider/model | Documented upstream choice options per question | Evidence/qualification |
+| --- | --- | --- |
+| TypeSafe Jev | Up to 255 | [Choice docs](https://docs.typesafe.ai/primitives/choice); current Jev service documentation |
+| OpenAI Decisions `gpt-6-luna` | 2–255 | [API reference](https://developers.openai.com/api/reference/resources/decisions/methods/create), confirmed from official indexed search results; direct reference fetch returned 404 during this investigation |
+| Perplexity `pplx-decider-v1.2`, Flash v1.2 and documented aliases (including catalog v1/v1.1 IDs) | 1–255 | [Request limits](https://docs.perplexity.ai/docs/decisions/quickstart#request-limits) and [model names](https://docs.perplexity.ai/docs/decisions/quickstart#model-names) |
+| Cloudflare Clef | 2–255 | [Official input schema](https://developers.cloudflare.com/workers-ai/models/clef/schema-input.json) |
+| Cloudflare Clef Flash | 2–255 | [Official input schema](https://developers.cloudflare.com/workers-ai/models/clef-flash/schema-input.json) |
+| Cloudflare-hosted Jev | Not independently verified | Do not assume direct-TypeSafe limits apply to every gateway |
+| Microsoft Decision-1 | Not specified in the fetched guide | [Foundry guide](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision) |
+| OpenRouter-hosted Jev / custom routes | Endpoint-dependent; not verified | Requires the selected gateway/model's contract |
+
+A documented upstream maximum is not a live deployment guarantee. Limits are matched to known model IDs on official endpoints; other deployments and gateways must not silently inherit an upstream model's limit. A configured `maxChoices` must be a safe integer of at least 2 and must reflect that endpoint's actual capability.
+
+### Optional NONE and sequential choice batching
+
+Both settings default to `false`:
+
+```json
+{
+  "pi-classifier": {
+    "none_of_above_choice": true,
+    "remove_choice_limits": true
+  }
+}
+```
+
+`remove_choice_limits: true` **requires** `none_of_above_choice: true`. Both `classify` and `classify_compare` reject an invalid pair before any provider request, with:
+
+```text
+remove_choice_limits requires none_of_above_choice: true. No classifier request was sent.
+```
+
+With only `none_of_above_choice` enabled, the extension adds a collision-safe internal NONE option to every choice question. That option consumes one slot: a 255-option provider can accept 254 real choices plus NONE in a single request. If the list exceeds that capacity while `remove_choice_limits` is false, the call fails locally with instructions to enable both flags or reduce the list.
+
+With both flags enabled, the extension walks the choices in their JavaScript/JSON object enumeration order, sending at most `maxChoices - 1` real choices plus NONE per batch. On a 255-option model this is **254 + 1**. A question advances only if NONE's probability is **strictly greater than every real option's probability**, not merely because the provider picked NONE and not necessarily greater than 50%. A unique real winner ends that question. An exact tie for top probability returns `{ "type": "ambiguous" }`. If all batches reject, the answer is `{ "type": "no_match" }`. Typed refusals stop that question without advancing.
+
+Batching is **sequential first-match selection**, not a global best-choice guarantee. An early acceptable result can hide a better later option, and NONE itself can be unreliable. Returned choice probabilities cover only the winning batch's real options, with `probabilityScope: "batch"` and a separate `noneOfAboveProbability`; those real probabilities plus NONE sum to approximately one. Unseen options are not assigned fabricated zeros. The internal NONE label is never returned as the selected real choice. Ordinary calls without these flags retain their previous answer shapes.
+
+Multiple choice questions progress independently in shared rounds; settled questions and bool/score/box questions are not resent. Images are prepared once per selected route and included in the required requests. Each request may be billed. Usage and estimated cost cover all completed calls in a successful result, with `providerCalls` for transparency. A multi-call result omits a single `requestId` because no one ID represents every request. If a later request fails after partial completion, the operation may have incurred charges; HTTP 401/404/429 after completed batches does not replay the operation on a fallback route.
+
+For an endpoint without a known limit, automatic batching fails before any request until you set its verified `providers.<id>.maxChoices` or `customProviders.<id>.maxChoices`. This setting does not remove context-window, input-byte, image, output-size, timeout or cancellation protections. The 2 MiB original text/questions limit and 40 KiB returned-result limit remain in place. No automatic tree construction, retrieval, hidden model switching or cross-batch probability normalization is performed.
 
 ## Microsoft Decision-1 on Foundry
 
@@ -156,11 +340,11 @@ The extension appends `/providers/microsoft/v1/systemone` and uses the `api-key`
 
 ## Fallback and explicit comparison
 
-`classify` uses the default first. It tries configured `fallback` entries in order **only** after a missing API key or an explicit HTTP **401, 404, or 429**. Each resolved endpoint/model is attempted at most once. When fallback is exercised, `attemptedRoutes` identifies the routes considered, including missing-key failures.
+`classify` uses the default first. It tries configured `fallback` entries in order **only** after a missing API key or an explicit HTTP **401, 404, or 429**. Each resolved endpoint/model is selected at most once in the fallback chain; explicitly configured choice batching can make multiple requests on that selected route. When fallback is exercised, `attemptedRoutes` identifies the routes considered, including missing-key failures.
 
 No automatic fallback occurs after 403/policy refusal, 400/422, 5xx, timeout, network failure, cancellation, malformed answers, input/capability/configuration errors, low confidence, or typed refusals. Each candidate validates the original input against its own capabilities; incompatible images or box questions stop the chain, never silently drop input. Every attempted request has its own timeout. Crossing billing providers and sharing state with them happens only through explicitly configured route pairs. Omit `fallback` or use `[]` to disable it.
 
-Use **`classify_compare`** only when you explicitly want a model comparison. It accepts the same `{ state, questions, images? }` as `classify`, runs exactly the entries in `compare` sequentially, and never substitutes the default, uses fallback, or changes settings. Every entry is a separate potentially billable call. Responses contain labeled `results` with status, duration in milliseconds, typed answers/token usage on success, or safe errors. A failed entry does not discard successes. Duplicate endpoint/model entries report an error without another call. Cancellation retains completed results, records an in-flight cancellation when present, sets `cancelled`, and prevents later requests. Scores from different models are not assumed to be calibrated equally.
+Use **`classify_compare`** only when you explicitly want a model comparison. It accepts the same `{ state, questions, images? }` as `classify`, runs exactly the entries in `compare` sequentially, and never substitutes the default, uses fallback, or changes settings. Every entry is a separate potentially billable classification; configured choice batching can make multiple provider requests for that entry. Responses contain labeled `results` with status, duration in milliseconds, typed answers/token usage and estimated cost (or an unavailable reason) on success, or safe errors. A failed entry does not discard successes. Duplicate endpoint/model entries report an error without another call. Cancellation retains completed results, records an in-flight cancellation when present, sets `cancelled`, and prevents later requests. Scores from different models are not assumed to be calibrated equally.
 
 You can also run `/classifier compare <JSON params>`, for example:
 

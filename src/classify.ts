@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 import { resolveApiKey } from "./auth.js";
 import { configuredDefault, configuredRoutes, resolveModel } from "./config.js";
 import { prepareInput } from "./inputs.js";
+import { choicePolicy, executeChoices } from "./choices.js";
 import { classifyWithProvider } from "./providers.js";
 import {
   ClassifierError,
@@ -15,7 +16,7 @@ import {
 } from "./types.js";
 import { validateParams } from "./validation.js";
 
-type ClassifyOptions = {
+export type ClassifyOptions = {
   settings: ClassifierSettings;
   cwd: string;
   signal?: AbortSignal;
@@ -43,7 +44,14 @@ async function classifyOnce(
   const prepared = await prepareInput(input, route, options.cwd, options.signal);
   checkCancelled(options.signal);
   const key = resolveApiKey(route);
-  const result = await classifyWithProvider(route, prepared, key, options.signal);
+  const result = await executeChoices(
+    prepared,
+    route,
+    choicePolicy(options.settings),
+    (questions) =>
+      classifyWithProvider(route, { ...prepared, questions }, key, options.signal),
+    options.signal,
+  );
   if (Buffer.byteLength(JSON.stringify(result, null, 2)) > 40 * 1024)
     throw new ClassifierError(
       "response",
@@ -65,6 +73,7 @@ export async function classify(
   params: unknown,
   options: ClassifyOptions,
 ): Promise<ClassifierResult> {
+  choicePolicy(options.settings);
   const input = validateParams(params);
   const candidates = [
     configuredDefault(options.settings),
@@ -98,6 +107,7 @@ export async function compareClassifiers(
   params: unknown,
   options: ClassifyOptions,
 ): Promise<ClassifierComparisonResult> {
+  choicePolicy(options.settings);
   const input = validateParams(params);
   const candidates = configuredRoutes(options.settings, "compare");
   if (candidates.length === 0)

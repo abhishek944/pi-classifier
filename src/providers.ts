@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { postJson } from "./http.js";
+import { estimateCost, tokenCount } from "./cost.js";
 import {
   ClassifierError,
   isRecord,
@@ -86,12 +87,6 @@ function unitInterval(label: string, value: unknown, field: string): number {
   return Math.min(1, Math.max(0, value));
 }
 
-function tokenCount(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? value
-    : undefined;
-}
-
 function normalizedUsage(
   value: unknown,
 ): ClassifierResult["usage"] | undefined {
@@ -102,24 +97,33 @@ function normalizedUsage(
   const total =
     tokenCount(value.total_tokens) ?? tokenCount((input ?? 0) + (output ?? 0));
   if (total === undefined) return undefined;
-  return {
+  const usage: NonNullable<ClassifierResult["usage"]> = {
     inputTokens: input ?? 0,
     outputTokens: output ?? 0,
     totalTokens: total,
   };
+  if (isRecord(value.input_tokens_details)) {
+    const cached = tokenCount(value.input_tokens_details.cached_tokens);
+    const writes = tokenCount(value.input_tokens_details.cache_write_tokens);
+    if (cached !== undefined) usage.cachedInputTokens = cached;
+    if (writes !== undefined) usage.cacheWriteTokens = writes;
+  }
+  return usage;
 }
 
 function finish(
   route: ResolvedModel,
   answers: Record<string, Answer>,
-  usage: ClassifierResult["usage"] | undefined,
+  rawUsage: unknown,
   requestId: string | undefined,
 ): ClassifierResult {
   const result: ClassifierResult = {
     provider: route.route,
     model: route.model,
     answers,
+    cost: estimateCost(route, rawUsage),
   };
+  const usage = normalizedUsage(rawUsage);
   if (usage !== undefined) result.usage = usage;
   if (requestId !== undefined) result.requestId = requestId;
   return result;
@@ -610,7 +614,7 @@ async function classifyOpenAi(
   return finish(
     route,
     parseOpenAiAnswers(OPENAI_LABEL, body.answers, input.questions),
-    normalizedUsage(body.usage),
+    body.usage,
     requestId,
   );
 }
@@ -690,7 +694,7 @@ async function classifyPerplexity(
   return finish(
     route,
     parseTypedAnswers(PERPLEXITY_LABEL, body.answers, input.questions),
-    normalizedUsage(body.usage),
+    body.usage,
     requestId,
   );
 }
@@ -751,7 +755,7 @@ async function classifyMicrosoft(
   return finish(
     route,
     parseTypedAnswers(label, answers, input.questions),
-    normalizedUsage(body.usage),
+    body.usage,
     requestId,
   );
 }
@@ -806,7 +810,7 @@ async function classifySystemOne(
   return finish(
     route,
     parseTypedAnswers(TYPESAFE_LABEL, body.answers, input.questions),
-    normalizedUsage(body.usage),
+    body.usage,
     requestId,
   );
 }
@@ -887,8 +891,11 @@ async function classifyCloudflare(
   );
   const result = unwrapCloudflare(CLOUDFLARE_LABEL, body);
   const usage =
-    normalizedUsage(result.usage) ??
-    normalizedUsage(isRecord(body) ? body.usage : undefined);
+    normalizedUsage(result.usage) !== undefined
+      ? result.usage
+      : isRecord(body)
+        ? body.usage
+        : undefined;
   return finish(
     route,
     parseTypedAnswers(CLOUDFLARE_LABEL, result.answers, input.questions),

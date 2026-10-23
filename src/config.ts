@@ -6,6 +6,8 @@ import {
   resolveConfigDir,
 } from "@amaster.ai/pi-shared/settings";
 import { cloudflareAccountId } from "./auth.js";
+import { resolvePricing } from "./cost.js";
+import { choicePolicy } from "./choices.js";
 import {
   ClassifierError,
   isRecord,
@@ -253,6 +255,7 @@ export function resolveModel(
   settings: ClassifierSettings,
   selected: ClassifierRoute = configuredDefault(settings),
 ): ResolvedModel {
+  choicePolicy(settings);
   const { provider: routeId, model: modelId } = routePair(selected, "route");
   if (
     !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(routeId) ||
@@ -372,9 +375,57 @@ export function resolveModel(
     experimentalImages: raw.experimentalImages === true,
     requestTimeoutMs: timeout,
   };
+  const pricing = resolvePricing(
+    result.provider,
+    modelId,
+    result.baseUrl,
+    raw.pricing,
+  );
+  if (pricing) result.pricing = pricing;
+  if (raw.maxChoices !== undefined) {
+    if (
+      typeof raw.maxChoices !== "number" ||
+      !Number.isSafeInteger(raw.maxChoices) ||
+      raw.maxChoices < 2
+    )
+      return configuration(
+        "Provider maxChoices must be a safe integer of at least 2.",
+      );
+    result.maxChoices = raw.maxChoices;
+  } else {
+    const knownLimit = knownMaxChoices(result);
+    if (knownLimit !== undefined) result.maxChoices = knownLimit;
+  }
   if (configuredApiKey) result.configuredApiKey = configuredApiKey;
   if (builtIn?.envVar) result.envVar = builtIn.envVar;
   return result;
+}
+
+function knownMaxChoices(route: ResolvedModel): number | undefined {
+  const directJev =
+    route.provider === "typesafe" &&
+    route.baseUrl === "https://api.typesafe.ai/v1" &&
+    ["jev-latest", "jev-preview", "jev-1.13.0", "jev-1.14.0"].includes(route.model);
+  const openai =
+    route.provider === "openai" &&
+    route.baseUrl === "https://api.openai.com/v1" &&
+    route.model === "gpt-6-luna";
+  const perplexity =
+    route.provider === "perplexity" &&
+    route.baseUrl === "https://api.perplexity.ai/v1" &&
+    [
+      "pplx-decider-v1.1-27b",
+      "pplx-decider-v1-27b",
+      "pplx-decider-v1.2",
+      "pplx-decider-latest",
+      "pplx-decider-flash-v1.2",
+      "pplx-decider-flash-latest",
+    ].includes(route.model);
+  const clef =
+    route.provider === "cloudflare" &&
+    /^https:\/\/api\.cloudflare\.com\/client\/v4\/accounts\/[^/]+\/ai$/.test(route.baseUrl) &&
+    ["@cf/cloudflare/clef", "@cf/cloudflare/clef-flash"].includes(route.model);
+  return directJev || openai || perplexity || clef ? 255 : undefined;
 }
 
 export function listModels(settings: ClassifierSettings): string {

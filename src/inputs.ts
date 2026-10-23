@@ -200,7 +200,7 @@ async function decodeImage(bytes: Buffer, signal?: AbortSignal): Promise<void> {
 const execFileAsync = promisify(execFile);
 
 /** Verify containment of the opened descriptor, not a raceable pre-open path. */
-async function verifyOpenedPath(
+export async function verifyOpenedPath(
   fd: number,
   root: string,
   signal?: AbortSignal,
@@ -225,7 +225,7 @@ async function verifyOpenedPath(
   } else {
     throw new ClassifierError(
       "capability",
-      "Safe local image loading currently supports macOS and Linux only. Text classification remains available.",
+      "Safe local file loading currently supports macOS and Linux only. Inline text/JSON classification remains available.",
     );
   }
   const inside = relative(root, openedPath);

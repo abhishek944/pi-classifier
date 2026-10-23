@@ -70,7 +70,6 @@ export function validateParams(value: unknown): ClassifyParams {
       const criteria = Object.entries(question.criteria);
       if (
         criteria.length < 1 ||
-        criteria.length > 64 ||
         criteria.some(
           ([key, entry]) =>
             !key.trim() ||
@@ -79,7 +78,7 @@ export function validateParams(value: unknown): ClassifyParams {
             entry.length > 4096,
         )
       )
-        invalid("choice requires 1–64 labels with string descriptions.");
+        invalid("choice requires at least one label with a string description.");
     } else if (question.type === "score") {
       if (
         !Array.isArray(question.criteria) ||

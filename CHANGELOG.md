@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+- Added `classify_tree` and `classifyTree` for nested `roots`/`id`/`description`/`children` classification trees supplied inline or as bounded local UTF-8 JSON files. Results contain selected Level1/Level2/etc, model-versus-automatic steps, partial statuses and accumulated token/cost/provider-call totals.
+- Tree traversal skips sole-child model calls, reuses configured sibling choice batching, and pins the successful route across later levels. Zero-call chains return genuine zero usage/cost; greedy and structural-inference limits are explicit.
+- Successful classification and comparison results now include estimated USD input/output/total cost with effective token rates, or an explicit unavailable reason instead of an assumed zero.
+- Bundled standard rates for known official OpenAI Decisions, TypeSafe Jev, current Perplexity v1.2 and Cloudflare routes; model/deployment-keyed pricing overrides for custom endpoints, unverified prices and account-specific rates.
+- Cache-aware cost calculation, optional reported cache usage, and documented provider choice limits. Costs are estimates, not invoices or Pi session billing totals.
+- Removed the artificial 64-choice cap; known routes enforce their documented provider maximum. Optional `none_of_above_choice` and `remove_choice_limits` settings add NONE and sequential first-match batching. Enabling batching without NONE fails before provider requests.
+- Explicit no-match/ambiguous outcomes, batch-local probability metadata, aggregate multi-call usage/cost and provider call counts. Unknown batching limits require verified provider `maxChoices`; later failures do not replay completed batches through fallback. The 32-question and byte/image/result protections remain.
+
+Verification: typecheck, build, package dry run, whitespace checks, recursive tool-schema validation, and independent source reviews passed. No unit tests or live provider calls were run for this release. Classification-tree traversal is greedy; automatic sole-child steps are structural inference, not model confirmation. Bundled prices are estimates, not invoices, and unknown gateway/model limits require verified configuration for batching.
+
 ## 0.2.0
 
 - Microsoft Decision-1 via Foundry resource endpoints and deployment names, API-key authentication, and text/JSON bool/choice/score questions.
