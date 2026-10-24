@@ -1,7 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { resolveApiKey } from "./auth.js";
 import { configuredDefault, configuredRoutes, resolveModel } from "./config.js";
-import { prepareInput } from "./inputs.js";
+import { prepareInput, type MemoryImage } from "./inputs.js";
 import { choicePolicy, executeChoices } from "./choices.js";
 import { classifyWithProvider } from "./providers.js";
 import {
@@ -20,6 +20,8 @@ export type ClassifyOptions = {
   settings: ClassifierSettings;
   cwd: string;
   signal?: AbortSignal;
+  /** Trusted programmatic ingress; all bytes still pass normal image validation. */
+  memoryImages?: readonly MemoryImage[];
 };
 
 function checkCancelled(signal?: AbortSignal): void {
@@ -41,7 +43,7 @@ async function classifyOnce(
   options: ClassifyOptions,
 ): Promise<ClassifierResult> {
   checkCancelled(options.signal);
-  const prepared = await prepareInput(input, route, options.cwd, options.signal);
+  const prepared = await prepareInput(input, route, options.cwd, options.signal, options.memoryImages);
   checkCancelled(options.signal);
   const key = resolveApiKey(route);
   const result = await executeChoices(

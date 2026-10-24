@@ -1,6 +1,6 @@
 {
   "name": "@abhishek944/pi-classifier",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Config-driven typed classification for Pi via Microsoft Decision-1, OpenAI Decisions, Perplexity, TypeSafe Jev and Cloudflare Clef, with selective fallback and explicit comparisons.",
   "keywords": [
     "pi-package",
@@ -41,6 +41,7 @@
     "src",
     "CHANGELOG.md",
     "README.md",
+    "COMPUTER_USE.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md"
   ],

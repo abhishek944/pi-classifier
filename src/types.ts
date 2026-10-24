@@ -160,6 +160,7 @@ export type ClassifierRoute = {
 };
 
 export interface ClassifierSettings {
+  computerUse?: import("./computer-use-types.js").ComputerUseSettings;
   none_of_above_choice?: boolean;
   remove_choice_limits?: boolean;
   default?: ClassifierRoute;

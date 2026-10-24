@@ -15,19 +15,27 @@ import {
 import { hasBox } from "./validation.js";
 import { imageReferences } from "./image-content.js";
 
+/** Programmatic image ingress. Never accepted as model-facing tool arguments. */
+export interface MemoryImage {
+  bytes: Uint8Array;
+  mimeType: "image/png" | "image/jpeg" | "image/webp";
+}
+
 export async function prepareInput(
   params: ClassifyParams,
   route: ResolvedModel,
   cwd: string,
   signal?: AbortSignal,
+  memoryImages: readonly MemoryImage[] = [],
 ): Promise<PreparedInput> {
-  if (params.images?.length && !route.images)
+  const imageCount = (params.images?.length ?? 0) + memoryImages.length;
+  if (imageCount && !route.images)
     throw new ClassifierError("capability", "The selected model does not support images, or experimental Jev images are disabled.");
-  if (hasBox(params.questions) && (!route.box || !params.images?.length))
+  if (hasBox(params.questions) && (!route.box || !imageCount))
     throw new ClassifierError("capability", "box requires an enabled Jev 1.14 model, experimentalImages/experimentalBox and an image.");
   const clef = route.api === "cloudflare-system-one" && route.images;
   const maxImages = clef ? 4 : route.api === "perplexity-decisions" ? 8 : 5;
-  if ((params.images?.length ?? 0) > maxImages)
+  if (imageCount > maxImages)
     throw new ClassifierError("input", "The selected route accepts at most " + maxImages + " images in this package.");
   if (imageReferences(params.state).length && !["system-one", "openai-decisions", "perplexity-decisions"].includes(route.api))
     throw new ClassifierError("capability", "This route does not support explicit image references in state; use shared image paths instead.");
@@ -53,14 +61,26 @@ export async function prepareInput(
   }
   const images: PreparedImage[] = [];
   let totalBytes = 0;
-  for (const source of params.images ?? []) {
+  const sources = [
+    ...(params.images ?? []).map((source) => ({ source })),
+    ...memoryImages.map((memory) => ({ memory })),
+  ];
+  for (const entry of sources) {
     cancelled(signal);
-    if (typeof source !== "string" && "url" in source) {
-      images.push({ id: source.id, url: source.url });
-      continue;
+    const maxBytes = (clef ? 4 : 5) * 1024 * 1024;
+    let image: PreparedLocalImage;
+    let id: string | undefined;
+    if ("memory" in entry) {
+      image = await prepareImageBytes(entry.memory.bytes, signal, maxBytes, entry.memory.mimeType);
+    } else {
+      const source = entry.source;
+      if (typeof source !== "string" && "url" in source) {
+        images.push({ id: source.id, url: source.url });
+        continue;
+      }
+      image = await loadLocalImage(typeof source === "string" ? source : source.path, cwd, signal, maxBytes);
+      if (typeof source !== "string") id = source.id;
     }
-    const path = typeof source === "string" ? source : source.path;
-    const image = await loadLocalImage(path, cwd, signal, (clef ? 4 : 5) * 1024 * 1024);
     totalBytes += Buffer.byteLength(image.data, "base64");
     if (totalBytes > (clef ? 8 : 10) * 1024 * 1024)
       throw new ClassifierError("input", "Images exceed the selected route's total upload byte limit.");
@@ -73,7 +93,7 @@ export async function prepareInput(
     }
     if (route.api === "perplexity-decisions" && Math.ceil(image.width / 32) * Math.ceil(image.height / 32) > 2048)
       throw new ClassifierError("input", "Resize Perplexity images to at most 2048 tiles of 32×32 pixels before classifying.");
-    images.push(typeof source === "string" ? image : { ...image, id: source.id });
+    images.push(id === undefined ? image : { ...image, id });
   }
   return { state: params.state, questions: params.questions, images };
 }
@@ -119,19 +139,37 @@ export async function loadLocalImage(
       if (offset > maxBytes) throw new Error();
       bytes = buffer.subarray(0, offset);
     } finally { await file.close(); }
-    const meta = await sharp(bytes, { limitInputPixels: 16_777_216 }).metadata();
-    if (!meta.width || !meta.height || !["png", "jpeg", "webp"].includes(meta.format ?? "") || (meta.pages ?? 1) > 1) throw new Error();
-    await decodeImage(bytes, signal);
-    return {
-      data: bytes.toString("base64"),
-      mimeType: meta.format === "jpeg" ? "image/jpeg" : meta.format === "png" ? "image/png" : "image/webp",
-      width: meta.width,
-      height: meta.height,
-    };
+    return await prepareImageBytes(bytes, signal, maxBytes);
   } catch (error) {
     cancelled(signal);
     if (error instanceof ClassifierError) throw error;
     throw new ClassifierError("input", "Images must be non-animated PNG/JPEG/WebP regular files inside cwd, without symlinks, within the documented byte limit and 16 megapixels each.");
+  }
+}
+
+/** The same full-decode boundary for files and transient Driver captures. */
+async function prepareImageBytes(
+  input: Uint8Array,
+  signal: AbortSignal | undefined,
+  maxBytes: number,
+  declaredMime?: MemoryImage["mimeType"],
+): Promise<PreparedLocalImage> {
+  cancelled(signal);
+  if (!(input instanceof Uint8Array) || input.byteLength < 1 || input.byteLength > maxBytes)
+    throw new ClassifierError("input", "Image bytes exceed the selected route's limit.");
+  try {
+    const bytes = Buffer.from(input);
+    const meta = await sharp(bytes, { limitInputPixels: 16_777_216 }).metadata();
+    if (!meta.width || !meta.height || !["png", "jpeg", "webp"].includes(meta.format ?? "") || (meta.pages ?? 1) > 1) throw new Error();
+    const mimeType = meta.format === "jpeg" ? "image/jpeg" : meta.format === "png" ? "image/png" : "image/webp";
+    if (declaredMime !== undefined && declaredMime !== mimeType) throw new Error();
+    await decodeImage(bytes, signal);
+    cancelled(signal);
+    return { data: bytes.toString("base64"), mimeType, width: meta.width, height: meta.height };
+  } catch (error) {
+    cancelled(signal);
+    if (error instanceof ClassifierError) throw error;
+    throw new ClassifierError("input", "Image bytes must decode as a still PNG/JPEG/WebP matching the declared MIME type, within 16 megapixels.");
   }
 }
 

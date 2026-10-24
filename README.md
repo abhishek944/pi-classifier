@@ -9,7 +9,7 @@ One configured default, optional selective fallback, and explicit model comparis
 Requires Node.js 22.19+ and Pi 1.2+. Install the tagged release from GitHub:
 
 ```sh
-pi install git:github.com/abhishek944/pi-classifier@v0.3.0
+pi install git:github.com/abhishek944/pi-classifier@v0.4.0
 ```
 
 The Pi package entrypoint is TypeScript source, so Git installs do not depend on committed build artifacts or a TypeScript compiler. Runtime dependencies are installed by Pi. The compiled `dist` exports remain available for library consumers after a build.
@@ -30,7 +30,7 @@ To install persistently after trying it:
 pi install /absolute/path/to/pi-classifier
 ```
 
-The package version and Git tag are `0.3.0` / `v0.3.0`. Installation is explicit. This release is prepared for GitHub; npm publication is a separate manual step.
+The package version and Git tag are `0.4.0` / `v0.4.0`. Installation is explicit. This release is prepared for GitHub; npm publication is a separate manual step.
 
 ## Configuration: same shape as pi-image-gen
 
@@ -470,6 +470,10 @@ Like image-gen, `customProviders` adds a named endpoint and explicit model list.
 ```
 
 Custom endpoints use their route ID as the Pi stored-credential provider ID. They have no implicit environment variable; use an explicit key reference. SystemOne image endpoints must implement Jev's assets protocol, declare image input and opt into `experimentalImages`. Box additionally requires `box: true` on the model and `experimentalBox: true` on the provider.
+
+## Goal-running computer use (OpenAI Decisions)
+
+The optional `classifier_computer_use` tool runs a bounded Cua Driver loop inside Pi, selecting only supervisor-permitted controls and returning explicit handoff/continuation when help is needed. It has a separate opt-in OpenAI route, preserves the normal classifier default, accepts transient Driver screenshots without disk files, and verifies completion through fresh Driver predicates. See [COMPUTER_USE.md](COMPUTER_USE.md) for setup, real input/output examples, safety limits, supervisor resumption and verification.
 
 ## Development and live verification
 

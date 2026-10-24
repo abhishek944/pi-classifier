@@ -1,4 +1,9 @@
 export { classify, compareClassifiers } from "./classify.js";
+export type { ClassifyOptions } from "./classify.js";
+export type { MemoryImage } from "./inputs.js";
+export { runComputerUse } from "./computer-use.js";
+export type { ComputerUseOptions } from "./computer-use.js";
+export type { ComputerUseParams, ComputerUseResult, ComputerUseSettings, ComputerControl, ComputerExpectation, DriverCall, DriverReply } from "./computer-use-types.js";
 export { classifyTree } from "./tree.js";
 export { renderClassifierBox } from "./box.js";
 export type { ClassifierBoxMode, ClassifierBoxEdges, ClassifierBoxPixelBox, ClassifierBoxResult } from "./box.js";

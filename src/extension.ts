@@ -8,6 +8,7 @@ import { Type } from "typebox";
 import { classify, compareClassifiers } from "./classify.js";
 import { classifyTree } from "./tree.js";
 import { registerBoxTool } from "./box-tool.js";
+import { registerComputerUseTool } from "./computer-use-tool.js";
 import {
   configuredRoutes,
   listModels,
@@ -298,6 +299,7 @@ export const classifyTreeOutput = Type.Object({
 
 export default function piClassifier(pi: ExtensionAPI): void {
   registerBoxTool(pi);
+  registerComputerUseTool(pi);
   pi.registerTool(
     defineTool({
       name: "classify",

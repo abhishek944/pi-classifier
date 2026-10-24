@@ -1,12 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
+
+- Added the opt-in OpenAI Decisions `classifier_computer_use` tool for a bounded observe/select/act/verify loop through existing Cua Driver MCP tools and Pi permission hooks, without changing the normal classifier default.
+- Added task-scoped semantic controls, supplied nonsecret fill values, explicit supervisor handoff/continuation, fresh observation on resume, cancellation and action limits, no-progress handback, and independent Driver completion predicates. Unknown input outcomes are never automatically replayed.
+- Added validated programmatic in-memory image inputs shared with existing classifier adapters, avoiding per-step screenshot files. Window-only passive text supplements indexed controls, and unrelated global menu-bar branches are excluded.
+- Added bounded decision evidence, stage timings and accumulated provider usage/cost estimates, plus computer-use setup, privacy, supported-scope and handoff guidance in `COMPUTER_USE.md`.
 
 - Added named local images and explicit `{$image:id}` references in shared state, Jev/OpenAI question instructions and Jev criteria, while retaining legacy shared image paths.
 - Added OpenAI hosted HTTP(S) image descriptors without local downloads. Unsupported image placements fail before provider requests; Jev batching includes only assets used by the current batch.
 - Added the local-only `classifier_box_image` tool and `renderClassifierBox` export for inline PNG box overlays or crops, without provider calls or automatic file writes.
 - Added current Perplexity v1.2/Flash/latest model catalog entries and support for up to eight Perplexity images. Corrected Jev's minimum side length to 280 pixels.
 - Documented capability differences, image-reference semantics, remote-image limits, experimental box caveats and user-owned verification steps. Video and unverified gateway image support remain excluded.
+
+Verification: typecheck, build, package dry run/content checks and whitespace checks passed. Real registered-tool Pi SDK/OpenAI/Cua Driver scenarios on a controlled native macOS window verified multi-action completion, missing-value handoff and supervisor resumption, no-predicate handback, nested hook blocking, action limits and cancellation. Direct source review passed; independent review was unavailable because of session-path tooling. No unit tests were added or run. General browser/Electron typing, arbitrary canvas targets and broad third-party-app coverage remain unverified; no comparative speedup is claimed.
 
 ## 0.3.0
 
