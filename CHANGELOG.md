@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1
+
+- Added `@abhishek944/pi-classifier/durable`, a settings-only native Durable extension named `classifier` that registers `classify`, `classify_compare`, `classify_tree`, and `classifier_box_image`.
+- Tool names, descriptions and parameter/result schemas are shared with the desktop extension through `src/tool-contracts.ts`, so the two surfaces cannot drift; desktop-only registration fields stay with the desktop extension.
+- Native credentials are explicit only (`providers.<id>.apiKey`, Cloudflare `accountId`, or the provider environment variable). The native path never reads Pi settings files or stored API-key credentials, and there are no admission, quota, authorization, or host callbacks.
+- `classify`, `classify_compare` and `classify_tree` are marked `replay: "unsafe"` so uncertain or billable executions are never replayed; `classifier_box_image` stays a pure local render marked `replay: "safe"`. Cancellation follows the invocation abort signal.
+- `classifier_computer_use` is not registered natively because Durable 1.1.0 exposes no generic tool-invocation API for Driver calls between decisions; no placeholder is shipped and the desktop extension remains the computer-use surface.
+
+Verification: typecheck, build and package dry run passed. No unit tests or live provider calls were run for this release.
+
 ## 0.4.0
 
 - Added the opt-in OpenAI Decisions `classifier_computer_use` tool for a bounded observe/select/act/verify loop through existing Cua Driver MCP tools and Pi permission hooks, without changing the normal classifier default.

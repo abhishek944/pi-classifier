@@ -9,7 +9,7 @@ One configured default, optional selective fallback, and explicit model comparis
 Requires Node.js 22.19+ and Pi 1.2+. Install the tagged release from GitHub:
 
 ```sh
-pi install git:github.com/abhishek944/pi-classifier@v0.4.0
+pi install git:github.com/abhishek944/pi-classifier@v0.4.1
 ```
 
 The Pi package entrypoint is TypeScript source, so Git installs do not depend on committed build artifacts or a TypeScript compiler. Runtime dependencies are installed by Pi. The compiled `dist` exports remain available for library consumers after a build.
@@ -30,7 +30,7 @@ To install persistently after trying it:
 pi install /absolute/path/to/pi-classifier
 ```
 
-The package version and Git tag are `0.4.0` / `v0.4.0`. Installation is explicit. This release is prepared for GitHub; npm publication is a separate manual step.
+The package version and Git tag are `0.4.1` / `v0.4.1`. Installation is explicit. This release is prepared for GitHub; npm publication is a separate manual step.
 
 ## Configuration: same shape as pi-image-gen
 
