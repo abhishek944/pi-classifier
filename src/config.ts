@@ -5,7 +5,7 @@ import {
   loadPiSettings,
   resolveConfigDir,
 } from "@amaster.ai/pi-shared/settings";
-import { cloudflareAccountId } from "./auth.js";
+import { cloudflareAccountId, type CredentialSource } from "./auth.js";
 import { resolvePricing } from "./cost.js";
 import { choicePolicy } from "./choices.js";
 import {
@@ -258,6 +258,7 @@ export function configuredRoutes(
 export function resolveModel(
   settings: ClassifierSettings,
   selected: ClassifierRoute = configuredDefault(settings),
+  source: CredentialSource = "pi-store",
 ): ResolvedModel {
   choicePolicy(settings);
   const { provider: routeId, model: modelId } = routePair(selected, "route");
@@ -335,7 +336,7 @@ export function resolveModel(
   if (api === "cloudflare-system-one" && !baseUrl)
     baseUrl =
       "https://api.cloudflare.com/client/v4/accounts/" +
-      cloudflareAccountId(optionalString(raw.accountId, "accountId")) +
+      cloudflareAccountId(optionalString(raw.accountId, "accountId"), source) +
       "/ai";
   if (!baseUrl)
     return configuration(

@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import { resolveApiKey } from "./auth.js";
+import { resolveApiKey, type CredentialSource } from "./auth.js";
 import { configuredDefault, configuredRoutes, resolveModel } from "./config.js";
 import { prepareInput, type MemoryImage } from "./inputs.js";
 import { choicePolicy, executeChoices } from "./choices.js";
@@ -20,6 +20,8 @@ export type ClassifyOptions = {
   settings: ClassifierSettings;
   cwd: string;
   signal?: AbortSignal;
+  /** Credential origin. Desktop keeps the default; the native Durable factory passes "explicit". */
+  credentialSource?: CredentialSource;
   /** Trusted programmatic ingress; all bytes still pass normal image validation. */
   memoryImages?: readonly MemoryImage[];
 };
@@ -45,7 +47,7 @@ async function classifyOnce(
   checkCancelled(options.signal);
   const prepared = await prepareInput(input, route, options.cwd, options.signal, options.memoryImages);
   checkCancelled(options.signal);
-  const key = resolveApiKey(route);
+  const key = resolveApiKey(route, options.credentialSource ?? "pi-store");
   const result = await executeChoices(
     prepared,
     route,
@@ -86,7 +88,7 @@ export async function classify(
   let lastError: unknown;
   for (const candidate of candidates) {
     checkCancelled(options.signal);
-    const route = resolveModel(options.settings, candidate);
+    const route = resolveModel(options.settings, candidate, options.credentialSource ?? "pi-store");
     const key = routeKey(route);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -130,7 +132,7 @@ export async function compareClassifiers(
     const start = performance.now();
     let selected = candidate;
     try {
-      const route = resolveModel(options.settings, candidate);
+      const route = resolveModel(options.settings, candidate, options.credentialSource ?? "pi-store");
       selected = routePair(route);
       const key = routeKey(route);
       if (seen.has(key))

@@ -471,6 +471,24 @@ Like image-gen, `customProviders` adds a named endpoint and explicit model list.
 
 Custom endpoints use their route ID as the Pi stored-credential provider ID. They have no implicit environment variable; use an explicit key reference. SystemOne image endpoints must implement Jev's assets protocol, declare image input and opt into `experimentalImages`. Box additionally requires `box: true` on the model and `experimentalBox: true` on the provider.
 
+## Native Durable entrypoint (`/durable`)
+
+`@abhishek944/pi-classifier/durable` exposes `createClassifierExtension(settings, options?)`, a settings-only native Durable extension named `classifier` with `classify`, `classify_compare`, `classify_tree`, and `classifier_box_image`. Tool names, descriptions, and parameter/result schemas are shared with the desktop extension through `src/tool-contracts.ts`, so the two surfaces cannot drift. Desktop-only registration fields (labels, prompt guidance, annotations) stay with the desktop extension.
+
+```js
+import { createClassifierExtension } from "@abhishek944/pi-classifier/durable";
+
+const extension = createClassifierExtension(
+  {
+    default: { provider: "openai-api", model: "gpt-6-luna" },
+    providers: { openai: { apiKey: process.env.OPENAI_API_KEY } },
+  },
+  { cwd: "/work/session" }, // optional; otherwise the Durable environment cwd, agent cwd, then process cwd
+);
+```
+
+Credentials must be explicit: `providers.<id>.apiKey` (plus `providers.cloudflare.accountId` for Cloudflare) or the provider environment variable. The native path never reads Pi settings files or Pi's stored API-key credentials, and there are no admission, quota, authorization, or host callbacks. `classify`, `classify_compare`, and `classify_tree` never replay after an uncertain or billable execution (`replay: "unsafe"`); `classifier_box_image` is a pure local render with no provider request, upload, or disk write (`replay: "safe"`). Cancellation follows the invocation abort signal. `classifier_computer_use` is not registered natively: its observe/select/act/verify loop needs to invoke Driver tools between decisions, and Durable 1.1.0 exposes no generic tool-invocation API, so no placeholder is shipped. Use the desktop extension for computer use.
+
 ## Goal-running computer use (OpenAI Decisions)
 
 The optional `classifier_computer_use` tool runs a bounded Cua Driver loop inside Pi, selecting only supervisor-permitted controls and returning explicit handoff/continuation when help is needed. It has a separate opt-in OpenAI route, preserves the normal classifier default, accepts transient Driver screenshots without disk files, and verifies completion through fresh Driver predicates. See [COMPUTER_USE.md](COMPUTER_USE.md) for setup, real input/output examples, safety limits, supervisor resumption and verification.

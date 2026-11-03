@@ -34,6 +34,10 @@
     "./extension": {
       "types": "./dist/extension.d.ts",
       "import": "./dist/extension.js"
+    },
+    "./durable": {
+      "types": "./dist/durable.d.ts",
+      "import": "./dist/durable.js"
     }
   },
   "files": [
@@ -64,12 +68,19 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=1.2.0",
+    "@earendil-works/pi-durable": "1.1.0",
     "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-durable": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.2.0",
+    "@earendil-works/pi-durable": "1.1.0",
+    "@types/node": "^22.0.0",
     "typebox": "*",
-    "typescript": "^5.9.3",
-    "@types/node": "^22.0.0"
+    "typescript": "^5.9.3"
   }
 }

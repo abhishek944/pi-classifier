@@ -1,6 +1,9 @@
 import { readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { ClassifierError, type ResolvedModel } from "./types.js";
 
+/** Where provider credentials may come from. Desktop keeps the "pi-store" default; the native Durable factory uses "explicit" only. */
+export type CredentialSource = "pi-store" | "explicit";
+
 /** Read the API-key entry only. Never resolve OAuth or mutate Pi's login state. */
 export function storedApiCredential(provider: string) {
   try {
@@ -41,8 +44,18 @@ function storedValue(
   return missing ? undefined : resolved.trim() || undefined;
 }
 
-export function resolveApiKey(route: ResolvedModel): string {
+export function resolveApiKey(route: ResolvedModel, source: CredentialSource = "pi-store"): string {
   if (route.configuredApiKey) return route.configuredApiKey;
+  if (source === "explicit") {
+    const key = route.envVar ? process.env[route.envVar]?.trim() : undefined;
+    if (!key) {
+      throw new ClassifierError(
+        "missing_credentials",
+        "No API key is configured for the selected classifier. Set providers.<id>.apiKey or the provider environment variable. Pi credential-store lookup is disabled on the explicit native path.",
+      );
+    }
+    return key;
+  }
   const credential = storedApiCredential(route.credentialProvider);
   const key =
     storedValue(credential?.key, credential?.env) ??
@@ -56,7 +69,17 @@ export function resolveApiKey(route: ResolvedModel): string {
   return key;
 }
 
-export function cloudflareAccountId(configured: string | undefined): string {
+export function cloudflareAccountId(configured: string | undefined, source: CredentialSource = "pi-store"): string {
+  if (source === "explicit") {
+    const id = configured?.trim() ?? process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
+    if (!id || !/^[a-zA-Z0-9_-]+$/.test(id)) {
+      throw new ClassifierError(
+        "configuration",
+        "Cloudflare requires a valid accountId or CLOUDFLARE_ACCOUNT_ID.",
+      );
+    }
+    return id;
+  }
   const stored = configured
     ? undefined
     : storedApiCredential("cloudflare-workers-ai");

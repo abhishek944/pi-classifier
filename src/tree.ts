@@ -20,7 +20,7 @@ export async function classifyTree(
 ): Promise<ClassifierTreeResult> {
   choicePolicy(options.settings);
   const input = await loadTreeInput(params, options.cwd, options.signal);
-  const initial = resolveModel(options.settings);
+  const initial = resolveModel(options.settings, undefined, options.credentialSource ?? "pi-store");
   const result: ClassifierTreeResult = {
     provider: initial.route,
     model: initial.model,
